@@ -10,7 +10,8 @@ class AgentAssistSidebar {
       transcripts: [],
       scores: [],
       coaching: [],
-      history: []
+      history: [],
+      coachChat: [] // {role:'user'|'assistant', text, ts}
     };
     this.websocket = null;
     this.mediaRecorder = null;
@@ -61,7 +62,7 @@ class AgentAssistSidebar {
     el.setAttribute('aria-label', 'Agent Assist');
     el.innerHTML = `
       <header class="agent-assist-header">
-        <span class="agent-assist-brand">phenom</span>
+        <span class="agent-assist-brand">Sales Assistant</span>
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
@@ -85,7 +86,11 @@ class AgentAssistSidebar {
     switch (tab) {
       case 'assist':
         if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
-        return s.suggestions.slice().reverse().map(txt => `<div class="aa-card">${txt}</div>`).join('');
+        return `<div class="aa-suggestions">` + s.suggestions.slice().reverse().map((obj,i) => {
+          const item = typeof obj === 'string' ? { text: obj } : obj;
+          const barClass = item.bar==='green' ? ' bar-green' : '';
+          return `<div class="aa-suggestion${barClass}" data-idx="${i}">${this.escapeHTML(item.text)}</div>`;
+        }).join('') + '</div>';
       case 'script':
         if (!s.transcripts.length) return this.emptyState('📝','Transcript','Live transcript will appear here.');
         return s.transcripts.slice().reverse().map(t => `<div class="aa-transcript-entry"><div class="aa-transcript-speaker">${t.speaker}</div><div class="aa-transcript-text">${t.text}</div><div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div></div>`).join('');
@@ -99,8 +104,7 @@ class AgentAssistSidebar {
         if (!s.history.length) return this.emptyState('📚','History Empty','Past meeting summaries will appear here.');
         return s.history.slice().reverse().map(h => `<div class="aa-history-item"><div class="aa-history-date">${new Date(h.timestamp).toLocaleString()}</div><div class="aa-history-title">${h.title}</div><div class="aa-history-participants">${h.participants||''}</div></div>`).join('');
       case 'coach':
-        if (!s.coaching.length) return this.emptyState('🎯','Coaching Tips','Real-time coaching will appear here.');
-        return s.coaching.slice().reverse().map(c => `<div class="aa-coach-tip"><div class="aa-coach-category">${c.category}</div><div class="aa-coach-title">${c.title}</div><div class="aa-coach-body">${c.content}</div></div>`).join('');
+        return this.getCoachTabHTML();
       default:
         return this.emptyState('ℹ️','Unavailable','Content not available.');
     }
@@ -188,7 +192,35 @@ class AgentAssistSidebar {
   addTranscript(speaker, text, timestamp) { this.state.transcripts.push({ speaker, text, timestamp: timestamp||Date.now() }); if (this.state.currentTab==='script') this.renderCurrentTab(); }
   updateScore(score, feedback) { this.state.scores.push({ score, feedback, timestamp: Date.now(), badge: score>=80?'Positive':'Neutral' }); if (this.state.currentTab==='score') this.renderCurrentTab(); }
   addCoachingTip(category, title, content) { this.state.coaching.push({ category, title, content, timestamp: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
-  renderCurrentTab() { if (!this.sidebar) return; const container = this.sidebar.querySelector('.agent-assist-content'); if (!container) return; container.innerHTML = this.getTabHTML(this.state.currentTab); }
+  addChatMessage(role, text) { this.state.coachChat.push({ role, text, ts: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
+  getCoachTabHTML() {
+    const tipsHTML = this.state.coaching.slice().reverse().map(c => `<div class="aa-coach-tip"><div class="aa-coach-category">${this.escapeHTML(c.category)}</div><div class="aa-coach-title">${this.escapeHTML(c.title)}</div><div class="aa-coach-body">${this.escapeHTML(c.content)}</div></div>`).join('');
+    const chatHTML = `<div class="aa-coach-chat">
+      <div class="aa-chat-messages" id="aa-chat-messages">${this.state.coachChat.map(m => `<div class="aa-msg ${m.role}">${this.escapeHTML(m.text)}</div>`).join('')}</div>
+      <form class="aa-chat-input-row" id="aa-chat-form">
+        <input type="text" id="aa-chat-input" placeholder="Ask a coaching question..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </div>`;
+    if (!tipsHTML && !this.state.coachChat.length) {
+      return this.emptyState('🎯','Coaching','Coaching tips & chat will appear here.') + chatHTML;
+    }
+    return tipsHTML + chatHTML;
+  }
+  escapeHTML(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s])); }
+  renderCurrentTab() { if (!this.sidebar) return; const container = this.sidebar.querySelector('.agent-assist-content'); if (!container) return; container.innerHTML = this.getTabHTML(this.state.currentTab); if (this.state.currentTab==='coach') this.bindChatEvents(); }
+  bindChatEvents(){
+    const form = this.sidebar.querySelector('#aa-chat-form');
+    if(!form) return;
+    form.addEventListener('submit', e=>{ e.preventDefault(); const input = form.querySelector('#aa-chat-input'); if(!input||!input.value.trim()) return; const text = input.value.trim(); input.value=''; this.addChatMessage('user', text); this.fakeAssistantReply(text); });
+    // Auto scroll
+    setTimeout(()=>{ const msgC = this.sidebar.querySelector('#aa-chat-messages'); if(msgC) msgC.scrollTop = msgC.scrollHeight; }, 30);
+  }
+  fakeAssistantReply(userText){
+    // Simple placeholder until backend integration
+    const reply = "Thanks! I'll analyze: " + userText.slice(0,140);
+    setTimeout(()=>{ this.addChatMessage('assistant', reply); const msgC = this.sidebar.querySelector('#aa-chat-messages'); if(msgC) msgC.scrollTop = msgC.scrollHeight; }, 600);
+  }
   moveUnderline() { if(!this.sidebar||!this.underlineEl) return; const active = this.sidebar.querySelector('.agent-assist-tab[aria-selected="true"]'); if(!active){ this.underlineEl.style.width='0'; return;} const rect = active.getBoundingClientRect(); const parentRect = active.parentElement.getBoundingClientRect(); this.underlineEl.style.width = rect.width + 'px'; this.underlineEl.style.transform = `translateX(${rect.left - parentRect.left}px)`; }
 
   setupAudioCapture() {
@@ -276,7 +308,7 @@ class AgentAssistSidebar {
   }
 
   applyLayoutPush() {
-    const width = getComputedStyle(document.documentElement).getPropertyValue('--assist-width').trim() || '360px';
+  const width = getComputedStyle(document.documentElement).getPropertyValue('--assist-width').trim() || '416px';
     this.layoutSelectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => { if(!el.dataset._assistPushed){ el.dataset._assistOriginalMarginRight = el.style.marginRight; el.dataset._assistPushed='1'; } el.style.marginRight = width; });
     });
