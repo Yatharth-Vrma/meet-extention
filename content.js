@@ -17,6 +17,7 @@ class AgentAssistSidebar {
     this.mediaRecorder = null;
     this.audioStream = null;
     this.headerHeight = 0;
+  this.lastHeaderNonZeroHeight = 0; // cache to prevent flicker
     this.contextInterval = null;
     this.underlineEl = null;
     this.layoutSelectors = [
@@ -132,21 +133,13 @@ class AgentAssistSidebar {
   hide() { if (!this.sidebar) return; this.state.visible = false; this.sidebar.classList.remove('is-visible'); this.removeLayoutPush(); this.updateToggleVisual(); }
   updateToggleVisual() { if (!this.toggleButton) return; this.toggleButton.classList.toggle('active', this.state.visible); this.toggleButton.setAttribute('aria-pressed', this.state.visible?'true':'false'); }
 
-  detectHeaderHeight() {
-    const header = document.querySelector('header, [role="banner"], .NcyfLe, .NQyKp');
-    if (header) {
-      const r = header.getBoundingClientRect();
-      if (r.height >= 40 && r.top <= 0) return r.height;
-    }
-    return 0;
-  }
+  detectHeaderHeight() { return 0; } // Force flush to top
   reposition() {
     if (!this.sidebar) return;
-    const h = this.detectHeaderHeight();
-    if (h !== this.headerHeight) {
-      this.headerHeight = h;
-      this.sidebar.style.top = h + 'px';
-      this.sidebar.style.height = `calc(100vh - ${h}px)`;
+    if (this.headerHeight !== 0 || this.sidebar.style.top !== '0px') {
+      this.headerHeight = 0;
+      this.sidebar.style.top = '0px';
+      this.sidebar.style.height = '100vh';
     }
   }
 
@@ -195,20 +188,20 @@ class AgentAssistSidebar {
   addChatMessage(role, text) { this.state.coachChat.push({ role, text, ts: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
   getCoachTabHTML() {
     const tipsHTML = this.state.coaching.slice().reverse().map(c => `<div class="aa-coach-tip"><div class="aa-coach-category">${this.escapeHTML(c.category)}</div><div class="aa-coach-title">${this.escapeHTML(c.title)}</div><div class="aa-coach-body">${this.escapeHTML(c.content)}</div></div>`).join('');
-    const chatHTML = `<div class="aa-coach-chat">
-      <div class="aa-chat-messages" id="aa-chat-messages">${this.state.coachChat.map(m => `<div class="aa-msg ${m.role}">${this.escapeHTML(m.text)}</div>`).join('')}</div>
-      <form class="aa-chat-input-row" id="aa-chat-form">
-        <input type="text" id="aa-chat-input" placeholder="Ask a coaching question..." autocomplete="off" />
-        <button type="submit">Send</button>
-      </form>
-    </div>`;
-    if (!tipsHTML && !this.state.coachChat.length) {
-      return this.emptyState('🎯','Coaching','Coaching tips & chat will appear here.') + chatHTML;
-    }
-    return tipsHTML + chatHTML;
+    const messages = this.state.coachChat.map(m => `<div class="aa-msg ${m.role}">${this.escapeHTML(m.text)}</div>`).join('');
+    return `<div class="aa-coach-layout">`+
+      `<div class="aa-coach-tips-scroll">${tipsHTML || this.emptyState('🎯','Coaching','Coaching tips will appear here.')}</div>`+
+      `<div class="aa-coach-chat"><div class="aa-chat-messages" id="aa-chat-messages">${messages}</div>`+
+      `<form class="aa-chat-input-row" id="aa-chat-form"><input type="text" id="aa-chat-input" placeholder="Type a message..." autocomplete="off" /><button type="submit">Send</button></form></div>`+
+    `</div>`;
   }
   escapeHTML(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s])); }
-  renderCurrentTab() { if (!this.sidebar) return; const container = this.sidebar.querySelector('.agent-assist-content'); if (!container) return; container.innerHTML = this.getTabHTML(this.state.currentTab); if (this.state.currentTab==='coach') this.bindChatEvents(); }
+  renderCurrentTab() {
+    if (!this.sidebar) return; const container = this.sidebar.querySelector('.agent-assist-content'); if (!container) return;
+    container.classList.toggle('aa-coach-mode', this.state.currentTab==='coach');
+    container.innerHTML = this.getTabHTML(this.state.currentTab);
+    if (this.state.currentTab==='coach') this.bindChatEvents();
+  }
   bindChatEvents(){
     const form = this.sidebar.querySelector('#aa-chat-form');
     if(!form) return;

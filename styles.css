@@ -28,7 +28,7 @@
 /* Container */
 .agent-assist-sidebar {
   position: fixed;
-  top: 0; /* adjusted via JS */
+  top: 0; /* filled to top */
   right: 0;
   width: var(--assist-width);
   height: 100vh; /* reduced via JS */
@@ -56,7 +56,7 @@
   background: var(--assist-header-bg);
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 25px;
   font-weight: 600;
   font-size: 18px;
   letter-spacing: .2px;
@@ -164,7 +164,10 @@
 .aa-empty-desc { font-size:14px; line-height:1.55; }
 
 /* Chat (Coach) */
-.aa-coach-chat { display:flex; flex-direction:column; height:100%; }
+.aa-coach-layout { display:flex; flex-direction:column; gap:12px; height:100%; }
+.aa-coach-tips-scroll { max-height:45%; overflow-y:auto; padding-right:4px; }
+.aa-coach-chat { display:flex; flex-direction:column; flex:1; min-height:0; }
+.aa-coach-mode .aa-coach-chat { margin-top:auto; }
 .aa-chat-messages { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-bottom:8px; }
 .aa-msg { max-width:80%; padding:10px 14px 12px; border-radius:14px; font-size:13px; line-height:1.45; position:relative; word-break:break-word; }
 .aa-msg.user { margin-left:auto; background:#FFFFFF; color:#1F2023; box-shadow: var(--assist-suggestion-shadow); }
@@ -172,8 +175,8 @@
 .aa-chat-input-row { display:flex; gap:8px; margin-top:14px; }
 .aa-chat-input-row input { flex:1; background:#FFFFFF; border:1px solid var(--assist-border-subtle); border-radius:12px; padding:10px 14px; font:500 13px 'Inter',sans-serif; color:#26282B; }
 .aa-chat-input-row input:focus { outline:none; box-shadow: var(--assist-focus-ring); }
-.aa-chat-input-row button { background: var(--assist-bar-purple); color:#fff; border:none; padding:0 18px; font:600 13px 'Inter',sans-serif; border-radius:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; transition: background .18s ease; }
-.aa-chat-input-row button:hover { background:#6E25C2; }
+.aa-chat-input-row button { background: black; color:#fff; border:none; padding:0 18px; font:600 13px 'Inter',sans-serif; border-radius:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; transition: background .18s ease; }
+.aa-chat-input-row button:hover { background:#d0cad8; }
 .aa-chat-input-row button:focus-visible { outline:none; box-shadow: var(--assist-focus-ring); }
 
 /* Toggle Button */
