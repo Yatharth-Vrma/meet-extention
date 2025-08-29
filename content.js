@@ -17,15 +17,11 @@ class AgentAssistSidebar {
     this.mediaRecorder = null;
     this.audioStream = null;
     this.headerHeight = 0;
-  this.lastHeaderNonZeroHeight = 0; // cache to prevent flicker
+    this.lastHeaderNonZeroHeight = 0; // cache to prevent flicker
     this.contextInterval = null;
     this.underlineEl = null;
     this.layoutSelectors = [
-      '.R1Qczc',
-      '.crqnQb',
-      '.T4LgNb',
-      '[data-allocation-index]',
-      'main'
+      '.R1Qczc', '.crqnQb', '.T4LgNb', '[data-allocation-index]', 'main'
     ];
     this.init();
   }
@@ -33,8 +29,8 @@ class AgentAssistSidebar {
   init() {
     this.ensureToggleButton();
     this.createSidebar();
-    this.connectWebSocket();
-    this.setupAudioCapture();
+    this.connectWebSocket(); // realtime ws (transcripts)
+    this.setupAudioCapture(); // prepare mic (recording starts on toggle)
     this.observeEnvironment();
     this.scheduleContextUpdates();
     if (window.location.hostname === 'meet.google.com') {
@@ -55,7 +51,7 @@ class AgentAssistSidebar {
     this.toggleButton = btn;
   }
 
-createSidebar() {
+  createSidebar() {
     if (this.sidebar && document.body.contains(this.sidebar)) return;
     const el = document.createElement('section');
     el.className = 'agent-assist-sidebar';
@@ -80,7 +76,7 @@ createSidebar() {
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
-          ${['assist','script','score','history','coach'].map((t,i)=>`<button role="tab" aria-selected="${t==='score'}" tabindex="${t==='score'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+          ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='score'}" tabindex="${t==='score'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
         </div>
         <span class="aa-status-dot live" title="Live"></span>
         <div class="agent-assist-tab-underline"></div>
@@ -88,10 +84,7 @@ createSidebar() {
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
     `;
     const micToggle = el.querySelector('.mic-toggle');
-    micToggle.addEventListener('click', () => {
-      micToggle.classList.toggle('active');
-      this.toggleMicrophone();
-    });
+    micToggle.addEventListener('click', () => { micToggle.classList.toggle('active'); this.toggleMicrophone(); });
     document.body.appendChild(el);
     this.sidebar = el;
     this.underlineEl = el.querySelector('.agent-assist-tab-underline');
@@ -100,25 +93,31 @@ createSidebar() {
     this.setupTransparencyToggle();
     this.renderCurrentTab();
     this.reposition();
-}
+  }
 
-toggleMicrophone() {
+  toggleMicrophone() {
     const micButton = this.sidebar.querySelector('.mic-toggle');
     const isActive = micButton.classList.contains('active');
-    
     if (isActive) {
-        console.log('Microphone enabled');
-        // Add dummy audio indication
-        micButton.style.color = '#28C397';
-        // You could add real mic logic here later
+      console.log('[AgentAssist][MIC] Enable requested');
+      if (!this.mediaRecorder) {
+        console.log('[AgentAssist][MIC] Recorder not ready – deferring start');
+        this._micReadyCallback = () => this.startRecording();
+        this.setupAudioCapture();
+      } else {
+        this.startRecording();
+      }
+      micButton.style.color = '#28C397';
     } else {
-        console.log('Microphone disabled');
-        micButton.style.color = '#6B6D72';
-        // You could add real mic disconnect logic here later
+      console.log('[AgentAssist][MIC] Disable requested');
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        try { this.mediaRecorder.stop(); console.log('[AgentAssist][MIC] Stopped'); } catch(e){ console.warn('[AgentAssist][MIC] stop error', e); }
+      }
+      micButton.style.color = '#6B6D72';
     }
-}
+  }
 
-setupDraggable() {
+  setupDraggable() {
     if (!this.sidebar) return;
     const header = this.sidebar.querySelector('.agent-assist-header');
     let isDragging = false;
@@ -216,7 +215,9 @@ setupTransparencyToggle() {
         }).join('') + '</div>';
       case 'script':
         if (!s.transcripts.length) return this.emptyState('📝','Transcript','Live transcript will appear here.');
-        return s.transcripts.slice().reverse().map(t => `<div class="aa-transcript-entry"><div class="aa-transcript-speaker">${t.speaker}</div><div class="aa-transcript-text">${t.text}</div><div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div></div>`).join('');
+        const aggregated = s.transcripts.map(t=>t.text).join(' ');
+        const entries = s.transcripts.slice().reverse().map(t => `<div class="aa-transcript-entry"><div class="aa-transcript-speaker">${this.escapeHTML(t.speaker)}</div><div class="aa-transcript-text">${this.escapeHTML(t.text)}</div><div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div></div>`).join('');
+        return `<div class="aa-script-block">${this.escapeHTML(aggregated)}</div>` + entries;
       case 'score':
         if (!s.scores.length) {
           // Provide a default example card similar to screenshot
@@ -278,30 +279,149 @@ show() {
   }
 
   connectWebSocket() {
+    const WS_URL = 'wss://omrealtime.cur8.in/ws/live-results?user_id=user.abcd@darwix.ai&manager_id=4248&company_id=31&team_id=23';
     try {
-      this.websocket = new WebSocket('ws://localhost:8000/ws/meet');
-      
-      this.websocket.onopen = () => {
-        console.log('Agent Assist: WebSocket connected');
-        this.sendContextUpdate();
-      };
-      
+      console.log('[AgentAssist][WS] Connecting to', WS_URL);
+      this.websocket = new WebSocket(WS_URL);
+      this.websocket.onopen = () => { console.log('[AgentAssist][WS] Connected'); this.sendContextUpdate(); };
       this.websocket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        this.handleWebSocketMessage(data);
+        console.log('[AgentAssist][WS] Raw <-', event.data.slice(0,250));
+        let data; try { data = JSON.parse(event.data); } catch(e){ console.warn('[AgentAssist][WS] JSON parse failed', e); return; }
+        if (data.action === 'transcript') this.processTranscriptMessage(data); else this.handleWebSocketMessage(data);
       };
-      
-      this.websocket.onclose = () => {
-        console.log('Agent Assist: WebSocket disconnected, attempting to reconnect...');
-        setTimeout(() => this.connectWebSocket(), 3000);
-      };
-      
-      this.websocket.onerror = (error) => {
-        console.error('Agent Assist: WebSocket error:', error);
-      };
-    } catch (error) {
-      console.error('Agent Assist: Failed to connect WebSocket:', error);
+      this.websocket.onclose = (e) => { console.log('[AgentAssist][WS] Closed code', e.code, 'retry in 5s'); setTimeout(()=>this.connectWebSocket(), 5000); };
+      this.websocket.onerror = (e) => console.error('[AgentAssist][WS] Error', e);
+    } catch(e){ console.error('[AgentAssist][WS] Connect exception', e); }
+  }
+
+  processTranscriptMessage(msg){
+    try {
+      const p = msg.data || {};
+      const text = p.transcript || p.translated_transcript || '';
+      if (!text) { console.log('[AgentAssist][TRANSCRIPT] Empty transcript field'); return; }
+      const speaker = p.speaker || 'Agent';
+      const ts = p.timestamp || msg.timestamp || Date.now();
+      console.log('[AgentAssist][TRANSCRIPT] +', speaker, '=>', text);
+      this.addTranscript(speaker, text, ts);
+    } catch(err){ console.warn('[AgentAssist][TRANSCRIPT] process error', err); }
+  }
+
+  handleWebSocketMessage(data) {
+    switch (data.type) {
+      case 'suggestion': this.addSuggestion(data.content); break;
+      case 'transcript': this.addTranscript(data.speaker, data.text, data.timestamp); break;
+      case 'score': this.updateScore(data.score, data.feedback); break;
+      case 'coaching': this.addCoachingTip(data.category, data.title, data.content); break;
+      default: break;
     }
+  }
+
+  addTranscript(speaker, text, timestamp) {
+    this.state.transcripts.push({ speaker, text, timestamp: timestamp || Date.now() });
+    if (this.state.currentTab === 'script') this.renderCurrentTab();
+  }
+
+  getTabHTML(tab) {
+    const s = this.state;
+    switch (tab) {
+      case 'assist':
+        if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
+        return `<div class="aa-suggestions">` + s.suggestions.slice().reverse().map((obj,i) => {
+          const item = typeof obj === 'string' ? { text: obj } : obj;
+          const barClass = item.bar==='green' ? ' bar-green' : '';
+          return `<div class="aa-suggestion${barClass}" data-idx="${i}">${this.escapeHTML(item.text)}</div>`;
+        }).join('') + '</div>';
+      case 'script':
+        if (!s.transcripts.length) return this.emptyState('📝','Transcript','Live transcript will appear here.');
+        const aggregated = s.transcripts.map(t=>t.text).join(' ');
+        const entries = s.transcripts.slice().reverse().map(t => `<div class="aa-transcript-entry"><div class="aa-transcript-speaker">${this.escapeHTML(t.speaker)}</div><div class="aa-transcript-text">${this.escapeHTML(t.text)}</div><div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div></div>`).join('');
+        return `<div class="aa-script-block">${this.escapeHTML(aggregated)}</div>` + entries;
+      case 'score':
+        if (!s.scores.length) {
+          // Provide a default example card similar to screenshot
+          return `<div class="aa-card accent-positive"><div class="aa-meta">${new Date().toLocaleDateString()}</div><div class="aa-title">Subject: Interview Coordination <span class="aa-pill">Positive</span></div><div class="aa-body">Result: Switching between 3–4 platforms to coordinate a single interview, leading to inefficiencies and dropped communication.</div><div class="aa-subtitle">Main Discussion Highlights:</div><ul class="aa-bullets"><li>Interview reschedules impact candidate perception and conversion rates.</li><li>Exploring solutions that auto-sync calendars and reduce manual coordination.</li></ul><div class="aa-subtitle">Key Numbers:</div><ul class="aa-bullets"><li>4+ tools used per interview cycle.</li><li>>60% of interviews require at least one reschedule.</li></ul><a class="aa-link" href="#" tabindex="-1">See Less</a></div>`;
+        }
+        return s.scores.slice().reverse().map(sc => `<div class="aa-card ${sc.score>=80?'accent-positive':''}"><div class="aa-meta">${new Date(sc.timestamp).toLocaleDateString()}</div><div class="aa-title">Score Update <span class="aa-pill">${sc.badge||'Update'}</span></div><div class="aa-body">${sc.feedback||''}</div></div>`).join('');
+      case 'history':
+        if (!s.history.length) return this.emptyState('📚','History Empty','Past meeting summaries will appear here.');
+        return s.history.slice().reverse().map(h => `<div class="aa-history-item"><div class="aa-history-date">${new Date(h.timestamp).toLocaleString()}</div><div class="aa-history-title">${h.title}</div><div class="aa-history-participants">${h.participants||''}</div></div>`).join('');
+      case 'coach':
+        return this.getCoachTabHTML();
+      default:
+        return this.emptyState('ℹ️','Unavailable','Content not available.');
+    }
+  }
+
+  emptyState(icon, title, desc) {
+    return `<div class="aa-empty"><div class="aa-empty-icon">${icon}</div><div class="aa-empty-title">${title}</div><div class="aa-empty-desc">${desc}</div></div>`;
+  }
+
+  switchTab(tab) {
+    if (!this.sidebar) return;
+    this.state.currentTab = tab;
+    const tabs = [...this.sidebar.querySelectorAll('.agent-assist-tab')];
+    tabs.forEach(btn => {
+      const active = btn.dataset.tab === tab;
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      btn.tabIndex = active ? 0 : -1;
+    });
+    this.renderCurrentTab();
+    this.moveUnderline();
+  }
+
+  toggle() { this.state.visible ? this.hide() : this.show(); }
+show() {
+    if (!this.sidebar) return;
+    this.state.visible = true;
+    this.sidebar.classList.add('is-visible');
+    
+    // Only apply layout push if not dragged
+    if (!this.sidebar.style.transform) {
+        this.reposition();
+        this.applyLayoutPush();
+    }
+    
+    this.updateToggleVisual();
+    this.moveUnderline();
+}  hide() { if (!this.sidebar) return; this.state.visible = false; this.sidebar.classList.remove('is-visible'); this.removeLayoutPush(); this.updateToggleVisual(); }
+  updateToggleVisual() { if (!this.toggleButton) return; this.toggleButton.classList.toggle('active', this.state.visible); this.toggleButton.setAttribute('aria-pressed', this.state.visible?'true':'false'); }
+
+  detectHeaderHeight() { return 0; } // Force flush to top
+  reposition() {
+    if (!this.sidebar) return;
+    if (this.headerHeight !== 0 || this.sidebar.style.top !== '0px') {
+      this.headerHeight = 0;
+      this.sidebar.style.top = '0px';
+      this.sidebar.style.height = '100vh';
+    }
+  }
+
+  connectWebSocket() {
+    const WS_URL = 'wss://omrealtime.cur8.in/ws/live-results?user_id=user.abcd@darwix.ai&manager_id=4248&company_id=31&team_id=23';
+    try {
+      console.log('[AgentAssist][WS] Connecting to', WS_URL);
+      this.websocket = new WebSocket(WS_URL);
+      this.websocket.onopen = () => { console.log('[AgentAssist][WS] Connected'); this.sendContextUpdate(); };
+      this.websocket.onmessage = (event) => {
+        console.log('[AgentAssist][WS] Raw <-', event.data.slice(0,250));
+        let data; try { data = JSON.parse(event.data); } catch(e){ console.warn('[AgentAssist][WS] JSON parse failed', e); return; }
+        if (data.action === 'transcript') this.processTranscriptMessage(data); else this.handleWebSocketMessage(data);
+      };
+      this.websocket.onclose = (e) => { console.log('[AgentAssist][WS] Closed code', e.code, 'retry in 5s'); setTimeout(()=>this.connectWebSocket(), 5000); };
+      this.websocket.onerror = (e) => console.error('[AgentAssist][WS] Error', e);
+    } catch(e){ console.error('[AgentAssist][WS] Connect exception', e); }
+  }
+
+  processTranscriptMessage(msg){
+    try {
+      const p = msg.data || {};
+      const text = p.transcript || p.translated_transcript || '';
+      if (!text) { console.log('[AgentAssist][TRANSCRIPT] Empty transcript field'); return; }
+      const speaker = p.speaker || 'Agent';
+      const ts = p.timestamp || msg.timestamp || Date.now();
+      console.log('[AgentAssist][TRANSCRIPT] +', speaker, '=>', text);
+      this.addTranscript(speaker, text, ts);
+    } catch(err){ console.warn('[AgentAssist][TRANSCRIPT] process error', err); }
   }
 
   handleWebSocketMessage(data) {
@@ -351,44 +471,47 @@ show() {
   moveUnderline() { if(!this.sidebar||!this.underlineEl) return; const active = this.sidebar.querySelector('.agent-assist-tab[aria-selected="true"]'); if(!active){ this.underlineEl.style.width='0'; return;} const rect = active.getBoundingClientRect(); const parentRect = active.parentElement.getBoundingClientRect(); this.underlineEl.style.width = rect.width + 'px'; this.underlineEl.style.transform = `translateX(${rect.left - parentRect.left}px)`; }
 
   setupAudioCapture() {
+    if (this.audioStream) return; // already acquired
+    console.log('[AgentAssist][MIC] Requesting microphone access');
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
+        console.log('[AgentAssist][MIC] Microphone granted');
         this.audioStream = stream;
-        this.mediaRecorder = new MediaRecorder(stream);
-        
+        try { this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' }); }
+        catch(e){ console.warn('[AgentAssist][MIC] mimeType not supported, defaulting', e); this.mediaRecorder = new MediaRecorder(stream); }
+        this.mediaRecorder.onstart = ()=>console.log('[AgentAssist][MIC] Recording started');
+        this.mediaRecorder.onstop = ()=>console.log('[AgentAssist][MIC] Recording stopped');
+        this.mediaRecorder.onerror = (e)=>console.error('[AgentAssist][MIC] Recorder error', e);
         this.mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && this.websocket?.readyState === WebSocket.OPEN) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
+          if (!event.data || event.data.size === 0) { console.log('[AgentAssist][MIC] Empty chunk'); return; }
+          if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) { console.log('[AgentAssist][MIC] WS not open, dropping chunk'); return; }
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            try {
               const base64Data = reader.result.split(',')[1];
-              this.websocket.send(JSON.stringify({
-                type: 'audio',
-                encoding: 'base64',
-                data: base64Data
-              }));
-            };
-            reader.readAsDataURL(event.data);
-          }
+              const packet = { action:'audio_chunk', encoding:'base64', data: base64Data, mime: event.data.type || 'audio/webm', timestamp: Date.now() };
+              this.websocket.send(JSON.stringify(packet));
+              console.log('[AgentAssist][MIC] Sent audio chunk bytes', base64Data.length);
+            } catch(err){ console.warn('[AgentAssist][MIC] send error', err); }
+          };
+          reader.readAsDataURL(event.data);
         };
-        
-        // Start recording in chunks
-        this.mediaRecorder.start(1000);
+        if (this._micReadyCallback) { console.log('[AgentAssist][MIC] Running deferred start'); this._micReadyCallback(); this._micReadyCallback = null; }
       })
-      .catch(error => {
-        console.error('Agent Assist: Failed to setup audio capture:', error);
-      });
+      .catch(err => console.error('[AgentAssist][MIC] getUserMedia failed', err));
+  }
+
+  startRecording(){
+    if (!this.mediaRecorder) { console.log('[AgentAssist][MIC] startRecording: no recorder'); return; }
+    if (this.mediaRecorder.state === 'recording') { console.log('[AgentAssist][MIC] Already recording'); return; }
+    try { this.mediaRecorder.start(1000); console.log('[AgentAssist][MIC] start(1000) called'); } catch(e){ console.error('[AgentAssist][MIC] start error', e); }
   }
 
   sendContextUpdate() {
     if (this.websocket?.readyState === WebSocket.OPEN) {
-      const context = {
-        type: 'context',
-        participants: this.getParticipants(),
-        meetingId: this.getMeetingId(),
-        timestamp: Date.now()
-      };
-      
+      const context = { action: 'context', participants: this.getParticipants(), meetingId: this.getMeetingId(), timestamp: Date.now() };
       this.websocket.send(JSON.stringify(context));
+      console.log('[AgentAssist][CTX] Sent context update');
     }
   }
 
