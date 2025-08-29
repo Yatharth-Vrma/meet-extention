@@ -64,6 +64,14 @@ createSidebar() {
     el.innerHTML = `
       <header class="agent-assist-header">
         <span class="agent-assist-brand">Sales Assistant</span>
+        <button class="mic-toggle" aria-label="Toggle Microphone" title="Toggle Microphone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
         <button class="transparency-toggle" aria-label="Toggle Transparency" title="Toggle Transparency">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 3v18M3 12h18"/>
@@ -79,6 +87,11 @@ createSidebar() {
       </div>
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
     `;
+    const micToggle = el.querySelector('.mic-toggle');
+    micToggle.addEventListener('click', () => {
+      micToggle.classList.toggle('active');
+      this.toggleMicrophone();
+    });
     document.body.appendChild(el);
     this.sidebar = el;
     this.underlineEl = el.querySelector('.agent-assist-tab-underline');
@@ -87,6 +100,22 @@ createSidebar() {
     this.setupTransparencyToggle();
     this.renderCurrentTab();
     this.reposition();
+}
+
+toggleMicrophone() {
+    const micButton = this.sidebar.querySelector('.mic-toggle');
+    const isActive = micButton.classList.contains('active');
+    
+    if (isActive) {
+        console.log('Microphone enabled');
+        // Add dummy audio indication
+        micButton.style.color = '#28C397';
+        // You could add real mic logic here later
+    } else {
+        console.log('Microphone disabled');
+        micButton.style.color = '#6B6D72';
+        // You could add real mic disconnect logic here later
+    }
 }
 
 setupDraggable() {
@@ -405,19 +434,6 @@ show() {
     if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { this.switchTab(tabs[idx].dataset.tab); }
   }
 
-  applyLayoutPush() {
-  const width = getComputedStyle(document.documentElement).getPropertyValue('--assist-width').trim() || '416px';
-    this.layoutSelectors.forEach(sel => {
-      document.querySelectorAll(sel).forEach(el => { if(!el.dataset._assistPushed){ el.dataset._assistOriginalMarginRight = el.style.marginRight; el.dataset._assistPushed='1'; } el.style.marginRight = width; });
-    });
-    document.body.style.paddingRight = width; // fallback
-  }
-  removeLayoutPush() {
-    this.layoutSelectors.forEach(sel => {
-      document.querySelectorAll(sel).forEach(el => { if(el.dataset._assistPushed){ el.style.marginRight = el.dataset._assistOriginalMarginRight || ''; delete el.dataset._assistPushed; delete el.dataset._assistOriginalMarginRight; } });
-    });
-    document.body.style.paddingRight='';
-  }
 }
 
 // Legacy LayoutPusher removed; integrated into AgentAssistSidebar

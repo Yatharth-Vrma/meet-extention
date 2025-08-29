@@ -48,6 +48,8 @@
   transform: translateX(8px);
   opacity: 0;
   pointer-events: none;
+    isolation: isolate; /* Prevents CSS conflicts */
+
   transition: transform .22s ease, opacity .22s ease, top .2s ease, height .2s ease;
 }
 .agent-assist-sidebar.is-visible { opacity: 1; pointer-events: auto; }
@@ -230,7 +232,41 @@
   justify-content: center;
   transition: background-color 0.2s, color 0.2s;
 }
+.transcript-display {
+  position: absolute;
+  width: 368px;
+  height: 242px;
+  left: 24px;
+  top: 120px;
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 22px;
+  color: #FFFFFF;
+  z-index: 1000;
+}
+.agent-assist-error {
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  padding: 10px;
+  margin: 10px;
+  border-radius: 4px;
+}
 
+.agent-assist-warning {
+  color: #856404;
+  background-color: #fff3cd;
+  border: 1px solid #ffeeba;
+  padding: 10px;
+  margin: 10px;
+  border-radius: 4px;
+}
+.agent-assist-sidebar.transparent .transcript-display {
+  color: #FFFFFF;
+  text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+}
 .transparency-toggle:hover {
   background: #F3F4F6;
   color: #2E3033;
@@ -255,7 +291,49 @@
 
 /* Add transparency transition */
 .agent-assist-sidebar {
+    resize: both; /* Enable resizing */
+  min-width: 300px; /* Minimum width */
+  min-height: 400px; /* Minimum height */
+  max-width: 800px; /* Maximum width */
+  max-height: 100vh; /* Maximum height */
   transition: transform .22s ease, opacity .22s ease, top .2s ease, height .2s ease, background-color .3s ease;
+}
+.agent-assist-sidebar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 15px;
+  height: 15px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--assist-header-bg) 50%);
+}
+
+/* Add microphone button styles */
+.mic-toggle {
+  position: absolute;
+  top: 12px;
+  right: 70px;
+  background: none;
+  border: none;
+  padding: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #6B6D72;
+  transition: background-color 0.2s;
+}
+
+.mic-toggle:hover {
+  background: #F3F4F6;
+}
+
+.mic-toggle.active {
+  color: #28C397;
+}
+
+.mic-toggle svg {
+  width: 20px;
+  height: 20px;
 }
 
 .agent-assist-sidebar.transparent {
