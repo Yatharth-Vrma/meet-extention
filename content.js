@@ -55,7 +55,7 @@ class AgentAssistSidebar {
     this.toggleButton = btn;
   }
 
-  createSidebar() {
+createSidebar() {
     if (this.sidebar && document.body.contains(this.sidebar)) return;
     const el = document.createElement('section');
     el.className = 'agent-assist-sidebar';
@@ -64,6 +64,11 @@ class AgentAssistSidebar {
     el.innerHTML = `
       <header class="agent-assist-header">
         <span class="agent-assist-brand">Sales Assistant</span>
+        <button class="transparency-toggle" aria-label="Toggle Transparency" title="Toggle Transparency">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3v18M3 12h18"/>
+          </svg>
+        </button>
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
@@ -78,9 +83,97 @@ class AgentAssistSidebar {
     this.sidebar = el;
     this.underlineEl = el.querySelector('.agent-assist-tab-underline');
     this.addTabListeners();
+    this.setupDraggable();
+    this.setupTransparencyToggle();
     this.renderCurrentTab();
     this.reposition();
-  }
+}
+
+setupDraggable() {
+    if (!this.sidebar) return;
+    const header = this.sidebar.querySelector('.agent-assist-header');
+    let isDragging = false;
+    let currentX;
+    let currentY;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+
+    const dragStart = (e) => {
+        if (e.target.closest('.transparency-toggle')) return; // Don't drag when clicking toggle
+        
+        if (e.type === "touchstart") {
+            initialX = e.touches[0].clientX - xOffset;
+            initialY = e.touches[0].clientY - yOffset;
+        } else {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+        }
+        
+        if (e.target === header) {
+            isDragging = true;
+        }
+    };
+
+    const dragEnd = () => {
+        isDragging = false;
+    };
+
+    const drag = (e) => {
+        if (!isDragging) return;
+        
+        e.preventDefault();
+        
+        if (e.type === "touchmove") {
+            currentX = e.touches[0].clientX - initialX;
+            currentY = e.touches[0].clientY - initialY;
+        } else {
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+        }
+
+        xOffset = currentX;
+        yOffset = currentY;
+        
+        // Constrain to window bounds
+        const rect = this.sidebar.getBoundingClientRect();
+        const maxX = window.innerWidth - rect.width;
+        const maxY = window.innerHeight - rect.height;
+        
+        xOffset = Math.min(Math.max(0, xOffset), maxX);
+        yOffset = Math.min(Math.max(0, yOffset), maxY);
+        
+        this.sidebar.style.transform = `translate3d(${xOffset}px, ${yOffset}px, 0)`;
+        this.sidebar.style.right = 'auto';
+        this.removeLayoutPush(); // Remove layout pushing when dragged
+    };
+
+    header.addEventListener('touchstart', dragStart, false);
+    header.addEventListener('touchend', dragEnd, false);
+    header.addEventListener('touchmove', drag, false);
+    header.addEventListener('mousedown', dragStart, false);
+    document.addEventListener('mousemove', drag, false);
+    document.addEventListener('mouseup', dragEnd, false);
+}
+
+setupTransparencyToggle() {
+    if (!this.sidebar) return;
+    const toggle = this.sidebar.querySelector('.transparency-toggle');
+    toggle.addEventListener('click', () => {
+        this.sidebar.classList.toggle('transparent');
+        toggle.classList.toggle('active');
+        // Save state to local storage if needed
+        localStorage.setItem('agentAssistTransparent', this.sidebar.classList.contains('transparent'));
+    });
+    
+    // Restore previous state
+    if (localStorage.getItem('agentAssistTransparent') === 'true') {
+        this.sidebar.classList.add('transparent');
+        toggle.classList.add('active');
+    }
+}
+
 
   getTabHTML(tab) {
     const s = this.state;
@@ -129,8 +222,20 @@ class AgentAssistSidebar {
   }
 
   toggle() { this.state.visible ? this.hide() : this.show(); }
-  show() { if (!this.sidebar) return; this.state.visible = true; this.sidebar.classList.add('is-visible'); this.reposition(); this.applyLayoutPush(); this.updateToggleVisual(); this.moveUnderline(); }
-  hide() { if (!this.sidebar) return; this.state.visible = false; this.sidebar.classList.remove('is-visible'); this.removeLayoutPush(); this.updateToggleVisual(); }
+show() {
+    if (!this.sidebar) return;
+    this.state.visible = true;
+    this.sidebar.classList.add('is-visible');
+    
+    // Only apply layout push if not dragged
+    if (!this.sidebar.style.transform) {
+        this.reposition();
+        this.applyLayoutPush();
+    }
+    
+    this.updateToggleVisual();
+    this.moveUnderline();
+}  hide() { if (!this.sidebar) return; this.state.visible = false; this.sidebar.classList.remove('is-visible'); this.removeLayoutPush(); this.updateToggleVisual(); }
   updateToggleVisual() { if (!this.toggleButton) return; this.toggleButton.classList.toggle('active', this.state.visible); this.toggleButton.setAttribute('aria-pressed', this.state.visible?'true':'false'); }
 
   detectHeaderHeight() { return 0; } // Force flush to top

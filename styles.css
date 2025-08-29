@@ -35,6 +35,8 @@
   display: flex;
   flex-direction: column;
   z-index: 10000;
+      transition: transform .22s ease, opacity .22s ease, top .2s ease, height .2s ease, background-color .3s ease;
+    background: #fff;
   border-top-left-radius: var(--assist-radius);
   border-bottom-left-radius: var(--assist-radius);
   overflow: hidden;
@@ -51,6 +53,9 @@
 .agent-assist-sidebar.is-visible { opacity: 1; pointer-events: auto; }
 
 /* Header */
+.agent-assist-sidebar.transparent .agent-assist-brand {
+    color: rgba(0, 0, 0, 0.8);
+}
 .agent-assist-header {
   height: var(--assist-header-height);
   background: var(--assist-header-bg);
@@ -65,8 +70,30 @@
 }
 .agent-assist-brand { user-select: none; }
 
+.agent-assist-sidebar.transparent .agent-assist-tabs {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(8px);
+}
+.agent-assist-sidebar.transparent .agent-assist-header {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(8px);
+}
 /* Tabs */
+.agent-assist-sidebar.transparent .transparency-toggle {
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.agent-assist-sidebar.transparent .transparency-toggle:hover {
+    background: rgba(243, 244, 246, 0.8);
+}
+
+.agent-assist-sidebar.transparent .transparency-toggle.active {
+    background: rgba(240, 233, 251, 0.8);
+    color: rgb(107, 109, 114);
+}
 .agent-assist-tabs {
+      transition: background-color 0.3s ease;
+    background: #fff;
   display: flex;
   background: var(--assist-header-bg);
   border-bottom: 1px solid var(--assist-border);
@@ -92,7 +119,7 @@
   transition: background .18s ease,color .18s ease;
 }
 .agent-assist-tab:hover { background: #F3F4F6; color: #2E3033; }
-.agent-assist-tab[aria-selected="true"] { background: #F0E9FB; color: #4C1FAE; }
+.agent-assist-tab[aria-selected="true"] { background: #F0E9FB; color: rgb(107, 109, 114); }
 .agent-assist-tab:focus-visible { outline: none; box-shadow: var(--assist-focus-ring); }
 .agent-assist-tab-underline { display:none; }
 
@@ -187,6 +214,64 @@
 
 /* Accessibility utility */
 .aa-visually-hidden { position:absolute; left:-9999px; top:auto; width:1px; height:1px; overflow:hidden; }
+
+.transparency-toggle {
+  background: none;
+  border: none;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #6B6D72;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.transparency-toggle:hover {
+  background: #F3F4F6;
+  color: #2E3033;
+}
+
+.transparency-toggle.active {
+  background: #F0E9FB;
+  color: rgb(107, 109, 114);
+}
+
+/* Add draggable cursor */
+.agent-assist-header {
+      transition: background-color 0.3s ease;
+    background: #fff;
+  cursor: move;
+  cursor: grab;
+}
+
+.agent-assist-header:active {
+  cursor: grabbing;
+}
+
+/* Add transparency transition */
+.agent-assist-sidebar {
+  transition: transform .22s ease, opacity .22s ease, top .2s ease, height .2s ease, background-color .3s ease;
+}
+
+.agent-assist-sidebar.transparent {
+  background-color: rgba(81, 81, 83, 0.6);
+  backdrop-filter: blur(8px);
+}
+.agent-assist-sidebar.transparent .agent-assist-header {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(8px);
+}
+.agent-assist-sidebar.transparent .aa-suggestion,
+.agent-assist-sidebar.transparent .aa-card,
+.agent-assist-sidebar.transparent .aa-history-item,
+.agent-assist-sidebar.transparent .aa-coach-tip {
+  background-color: rgba(255, 255, 255, 0.8);
+}
 
 /* Animation helpers */
 .fade-in { animation:fadeIn .3s ease; }
