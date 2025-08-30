@@ -152,6 +152,7 @@
   <div class="actions">
     <button class="button" id="openMeet">Open Google Meet</button>
     <button class="button secondary" id="toggleAssist">Toggle Assistant</button>
+    <button class="button secondary" id="configureAzure">Configure Azure STT</button>
   </div>
   
   <div class="features">
@@ -175,6 +176,25 @@
     <div class="feature">
       <span class="feature-icon">🎯</span>
       AI coaching
+    </div>
+  </div>
+  
+  <!-- Azure STT Configuration Modal -->
+  <div id="azureModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; width: 280px;">
+      <h3 style="margin: 0 0 16px 0; color: #202124;">Configure Azure Speech-to-Text</h3>
+      <div style="margin-bottom: 12px;">
+        <label style="display: block; font-size: 12px; color: #5f6368; margin-bottom: 4px;">Azure Region:</label>
+        <input type="text" id="azureRegion" placeholder="eastus, westus, etc." style="width: 100%; padding: 8px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 12px; color: #5f6368; margin-bottom: 4px;">API Key:</label>
+        <input type="password" id="azureApiKey" placeholder="Your Azure Speech Service key" style="width: 100%; padding: 8px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button id="saveAzure" class="button" style="flex: 1;">Save</button>
+        <button id="cancelAzure" class="button secondary" style="flex: 1;">Cancel</button>
+      </div>
     </div>
   </div>
   

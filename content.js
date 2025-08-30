@@ -34,6 +34,8 @@ class AgentAssistSidebar {
     this.speechRecognition = null;
     this.localMicStream = null;
     this.speechRecognitionManualStop = false;
+    this.speechRecognitionStarting = false; // Prevent multiple simultaneous starts
+    this.speechRecognitionRestartTimeout = null; // Track restart attempts
     
     // User parameters (you can modify these as needed)
     this.params = {
@@ -46,6 +48,41 @@ class AgentAssistSidebar {
       mic: '1',
       system: '0' // Set to '1' if you want system audio too
     };
+
+    // Remote participant transcription configuration (user must configure endpoint/apiKey)
+    this.remoteTranscription = {
+      enabled: true,
+      endpoint: null, // Azure STT endpoint: 'https://eastus.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1'
+      apiKey: null,   // Azure Speech Service API key
+      region: null,   // Azure region (e.g., 'eastus')
+      sampleRate: 16000,
+      sending: false,
+      vadThreshold: 0.013,
+      minSpeechMs: 300,
+      maxSegmentMs: 8000,
+      silenceMs: 500,
+      warned: false,
+      // Azure STT specific settings
+      language: 'en-US',
+      format: 'detailed', // 'simple' or 'detailed'
+      profanityFilter: 'None',
+      enableWordLevelTimestamps: true
+    };
+
+    // Attempt to load persisted endpoint/apiKey
+    try {
+      chrome?.storage?.sync?.get?.(['azureSttRegion','azureSttApiKey'], (cfg)=>{
+        if (cfg?.azureSttRegion) {
+          this.remoteTranscription.region = cfg.azureSttRegion;
+          this.remoteTranscription.endpoint = `https://${cfg.azureSttRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`;
+        }
+        if (cfg?.azureSttApiKey) this.remoteTranscription.apiKey = cfg.azureSttApiKey;
+        if (this.remoteTranscription.endpoint && this.remoteTranscription.apiKey) {
+          console.log('[AgentAssist][AZURE] Loaded Azure STT configuration from storage');
+          console.log('[AgentAssist][AZURE] Endpoint:', this.remoteTranscription.endpoint);
+        }
+      });
+    } catch(e) { /* storage not available in this context */ }
     
     this.websocket = null;
     this.mediaRecorder = null;
@@ -177,6 +214,12 @@ class AgentAssistSidebar {
     this.isStreaming = false;
     this.speechRecognitionManualStop = true;
     
+    // Clear any pending restart attempts
+    if (this.speechRecognitionRestartTimeout) {
+      clearTimeout(this.speechRecognitionRestartTimeout);
+      this.speechRecognitionRestartTimeout = null;
+    }
+    
     // Pause speech recognition (but keep setup for quick restart)
     if (this.speechRecognition) {
       this.speechRecognition.stop();
@@ -198,6 +241,15 @@ class AgentAssistSidebar {
     this.isStreaming = false;
     this.speechRecognitionManualStop = true;
     
+    // Clear any pending restart attempts
+    if (this.speechRecognitionRestartTimeout) {
+      clearTimeout(this.speechRecognitionRestartTimeout);
+      this.speechRecognitionRestartTimeout = null;
+    }
+    
+    // Reset speech recognition state
+    this.speechRecognitionStarting = false;
+    
     // Stop speech recognition
     if (this.speechRecognition) {
       this.speechRecognition.stop();
@@ -212,122 +264,299 @@ class AgentAssistSidebar {
 
     // Clean up tab audio resources
     this.cleanupTabAudio();
-
-    // Removed suggestion to keep assist tab blank
   }
 
-  // Real microphone capture with Web Speech API
+  // Real microphone capture with Azure STT
   async startLocalSpeechRecognition() {
     try {
+      console.log('[AgentAssist][MIC] Starting microphone capture and Azure STT...');
+      
+      // Don't start if already starting or running
+      if (this.speechRecognitionStarting || (this.speechRecognition && this.speechRecognition.state === 'recording')) {
+        console.log('[AgentAssist][MIC] Speech recognition already running or starting, skipping...');
+        return;
+      }
+      
       // Request microphone access
-      this.localMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Removed suggestion to keep assist tab blank
+      console.log('[AgentAssist][MIC] Requesting microphone access...');
+      this.localMicStream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: 16000
+        } 
+      });
+      console.log('[AgentAssist][MIC] Microphone access granted');
+      
+      // Set up audio processing for Azure STT
+      console.log('[AgentAssist][MIC] Setting up audio processing pipeline...');
+      this.setupLocalAudioProcessing(this.localMicStream);
+      
+    } catch (error) {
+      console.error('[AgentAssist][MIC] Error setting up microphone capture:', error);
+    }
+  }
+
+  // Set up local audio processing for Azure STT
+  setupLocalAudioProcessing(stream) {
+    try {
+      console.log('[AgentAssist][MIC] Setting up local audio processing...');
+      
+      // Create audio context
+      this.localAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this.localAudioContext;
+      console.log('[AgentAssist][MIC] Audio context created, sample rate:', ctx.sampleRate);
+      
+      // Create media stream source
+      const source = ctx.createMediaStreamSource(stream);
+      console.log('[AgentAssist][MIC] Media stream source created');
+      
+      // Load audio worklet for VAD
+      ctx.audioWorklet.addModule(chrome.runtime.getURL('audio-vad-processor.js')).then(() => {
+        console.log('[AgentAssist][MIC] Audio worklet loaded successfully');
+        
+        // Create VAD processor
+        this.localAudioNode = new AudioWorkletNode(ctx, 'vad-processor', {
+          processorOptions: {
+            vadThreshold: 0.013,
+            minMs: 300,
+            maxMs: 8000,
+            silenceMs: 500
+          }
+        });
+        console.log('[AgentAssist][MIC] VAD processor created');
+        
+        // Connect audio pipeline
+        source.connect(this.localAudioNode);
+        console.log('[AgentAssist][MIC] Audio pipeline connected');
+        
+        // Handle VAD segments
+        this.localAudioNode.port.onmessage = (event) => {
+          const data = event.data;
+          if (data?.type === 'segment') {
+            if (!data.enough) {
+              console.log('[AgentAssist][MIC] Speech segment too short, skipping');
+              return;
+            }
+            console.log('[AgentAssist][MIC] Speech segment detected, length:', data.samples.length, 'samples');
+            this.handleLocalSegment(data.samples, data.sampleRate);
+          }
+        };
+        
+        this.localAudioNode.port.onmessageerror = e => {
+          console.warn('[AgentAssist][MIC] Worklet port error', e);
+        };
+        
+        console.log('[AgentAssist][MIC] Local audio processing pipeline ready');
+        
+      }).catch(err => {
+        console.error('[AgentAssist][MIC] Failed to load audio worklet:', err);
+        console.log('[AgentAssist][MIC] Falling back to Web Speech API only');
+        this.setupWebSpeechAPI();
+      });
+      
+    } catch (error) {
+      console.error('[AgentAssist][MIC] Error setting up local audio processing:', error);
+    }
+  }
+
+  // Handle local audio segments
+  handleLocalSegment(float32, sr) {
+    console.log('[AgentAssist][MIC] Processing local audio segment...');
+    
+    // Downsample if needed
+    if (sr !== this.remoteTranscription.sampleRate) {
+      console.log('[AgentAssist][MIC] Downsampling from', sr, 'to', this.remoteTranscription.sampleRate);
+      float32 = this.downsampleFloat32(float32, sr, this.remoteTranscription.sampleRate);
+      sr = this.remoteTranscription.sampleRate;
+    }
+    
+    // Send to Azure STT
+    this.sendLocalSegmentToAzure(float32, sr);
+  }
+
+  // Send local audio segment to Azure STT
+  sendLocalSegmentToAzure(float32, sr) {
+    console.log('[AgentAssist][MIC] Sending local audio segment to Azure STT...');
+    
+    const rt = this.remoteTranscription;
+    if (!rt.endpoint || !rt.apiKey) {
+      console.log('[AgentAssist][MIC] Azure STT not configured, skipping');
+      return;
+    }
+    
+    // Convert audio to WAV
+    const wavBlob = this.floatToWavBlob(float32, sr);
+    console.log('[AgentAssist][MIC] Audio converted to WAV, size:', wavBlob.size, 'bytes');
+    
+    // Build Azure STT URL
+    const url = new URL(rt.endpoint);
+    url.searchParams.append('language', rt.language);
+    url.searchParams.append('format', rt.format);
+    url.searchParams.append('profanityFilter', rt.profanityFilter);
+    if (rt.enableWordLevelTimestamps) {
+      url.searchParams.append('enableWordLevelTimestamps', 'true');
+    }
+    
+    console.log('[AgentAssist][MIC] Sending to Azure STT:', url.toString());
+    
+    fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': rt.apiKey,
+        'Content-Type': 'audio/wav',
+        'Accept': 'application/json'
+      },
+      body: wavBlob
+    }).then(response => {
+      console.log('[AgentAssist][MIC] Azure STT response status:', response.status);
+      if (!response.ok) {
+        throw new Error(`Azure STT error: ${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    }).then(json => {
+      console.log('[AgentAssist][MIC] Azure STT response:', json);
+      
+      // Handle Azure STT response format
+      let text = '';
+      if (json.DisplayText) {
+        text = json.DisplayText;
+      } else if (json.NBest && json.NBest.length > 0) {
+        text = json.NBest[0].Display || json.NBest[0].Lexical;
+      } else if (json.Text) {
+        text = json.Text;
+      }
+      
+      if (text && text.trim()) {
+        console.log('[AgentAssist][MIC] Transcribed text:', text);
+        this.addTranscript('You', text.trim(), Date.now());
+      } else {
+        console.log('[AgentAssist][MIC] No text in Azure STT response');
+      }
+    }).catch(err => {
+      console.error('[AgentAssist][MIC] Azure STT error:', err);
+    });
+  }
+
+  // Set up Web Speech API as backup
+  setupWebSpeechAPI() {
+    try {
+      console.log('[AgentAssist][MIC] Setting up Web Speech API as backup...');
       
       // Check if browser supports Speech Recognition
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       
       if (!SpeechRecognition) {
-        console.log("Speech Recognition not supported in this browser");
+        console.log('[AgentAssist][MIC] Speech Recognition not supported in this browser');
         return;
       }
       
-      // Setup speech recognition
-      this.speechRecognition = new SpeechRecognition();
-      this.speechRecognition.continuous = true;
-      this.speechRecognition.interimResults = true;
-      this.speechRecognition.lang = 'en-US';
-      this.speechRecognition.maxAlternatives = 1;
+      // Setup speech recognition (only if not already created)
+      if (!this.speechRecognition) {
+        this.speechRecognition = new SpeechRecognition();
+        this.speechRecognition.continuous = true;
+        this.speechRecognition.interimResults = true;
+        this.speechRecognition.lang = 'en-US';
+        this.speechRecognition.maxAlternatives = 1;
+        console.log('[AgentAssist][MIC] Speech recognition object created');
+      }
       
-      // Remove problematic grammars assignment that was causing errors
-      
-      // Handle speech recognition results
-      this.speechRecognition.onresult = (event) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          const isFinal = event.results[i].isFinal;
-          
-          if (isFinal) {
-            // Final transcript - add to script tab with proper alignment
-            this.addTranscript('You', transcript.trim(), Date.now());
-            console.log('[AgentAssist] Final transcript from mic:', transcript);
-          } else {
-            // Interim results - could show in real-time if needed
-            console.log('[AgentAssist] Interim transcript:', transcript);
-          }
-        }
-      };
-      
-      this.speechRecognition.onstart = () => {
-        console.log('[AgentAssist] Speech recognition started');
-      };
-      
-      this.speechRecognition.onerror = (event) => {
-        console.error('[AgentAssist] Speech recognition error:', event.error);
+      // Only set up event handlers if not already set
+      if (!this.speechRecognition._handlersSet) {
+        console.log('[AgentAssist][MIC] Setting up speech recognition event handlers...');
         
-        // Handle different types of errors
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          console.error('[AgentAssist] Microphone access denied');
-          // Removed suggestion to keep assist tab blank
-          return;
-        }
-        
-        if (event.error === 'network') {
-          console.log('[AgentAssist] Network error, will retry speech recognition...');
-        }
-        
-        // For most errors, try to restart if still streaming
-        if (this.isStreaming && !this.speechRecognitionManualStop) {
-          console.log('[AgentAssist] Attempting to restart speech recognition after error...');
-          setTimeout(() => {
-            if (this.isStreaming && !this.speechRecognitionManualStop && this.speechRecognition) {
-              try {
-                this.speechRecognition.start();
-                console.log('[AgentAssist] Speech recognition restarted after error');
-              } catch (e) {
-                console.error('[AgentAssist] Failed to restart speech recognition:', e);
-                // Try again with longer delay
-                setTimeout(() => {
-                  if (this.isStreaming && !this.speechRecognitionManualStop) {
-                    this.restartSpeechRecognition();
-                  }
-                }, 2000);
-              }
+        // Handle speech recognition results
+        this.speechRecognition.onresult = (event) => {
+          console.log('[AgentAssist][MIC] Web Speech API result received');
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            const isFinal = event.results[i].isFinal;
+            
+            if (isFinal) {
+              console.log('[AgentAssist][MIC] Web Speech API final transcript:', transcript);
+              this.addTranscript('You (Web Speech)', transcript.trim(), Date.now());
+            } else {
+              console.log('[AgentAssist][MIC] Web Speech API interim transcript:', transcript);
             }
-          }, 1000);
-        }
-      };
-      
-      this.speechRecognition.onend = () => {
-        console.log('[AgentAssist] Speech recognition ended');
+          }
+        };
         
-        // Always restart if still streaming (continuous mode)
-        if (this.isStreaming && !this.speechRecognitionManualStop) {
-          console.log('[AgentAssist] Restarting speech recognition for continuous mode...');
-          setTimeout(() => {
-            this.restartSpeechRecognition();
-          }, 100);
-        } else {
-          console.log('[AgentAssist] Not restarting speech recognition - manually stopped or not streaming');
-        }
-      };
+        this.speechRecognition.onstart = () => {
+          console.log('[AgentAssist][MIC] Web Speech API started');
+          this.speechRecognitionStarting = false;
+        };
+        
+        this.speechRecognition.onerror = (event) => {
+          console.log('[AgentAssist][MIC] Web Speech API error:', event.error);
+          
+          if (event.error === 'no-speech') {
+            console.log('[AgentAssist][MIC] No speech detected (normal)');
+            return;
+          }
+          
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            console.error('[AgentAssist][MIC] Microphone access denied');
+            return;
+          }
+        };
+        
+        this.speechRecognition.onend = () => {
+          console.log('[AgentAssist][MIC] Web Speech API ended');
+          
+          if (this.isStreaming && !this.speechRecognitionManualStop && !this.speechRecognitionStarting) {
+            console.log('[AgentAssist][MIC] Restarting Web Speech API...');
+            setTimeout(() => {
+              if (this.isStreaming && !this.speechRecognitionManualStop) {
+                try {
+                  this.speechRecognition.start();
+                  console.log('[AgentAssist][MIC] Web Speech API restarted');
+                } catch (e) {
+                  console.error('[AgentAssist][MIC] Failed to restart Web Speech API:', e);
+                }
+              }
+            }, 100);
+          }
+        };
+        
+        // Mark handlers as set
+        this.speechRecognition._handlersSet = true;
+        console.log('[AgentAssist][MIC] Web Speech API event handlers set');
+      }
       
       // Start recognition
+      this.speechRecognitionStarting = true;
       this.speechRecognition.start();
+      console.log('[AgentAssist][MIC] Web Speech API started');
       
     } catch (error) {
-      console.error('[AgentAssist] Error setting up speech recognition:', error);
-      // Removed suggestion to keep assist tab blank
+      console.error('[AgentAssist][MIC] Error setting up Web Speech API:', error);
     }
+  }
+
+  // Helper function to schedule speech recognition restart
+  scheduleSpeechRecognitionRestart(delay) {
+    // Clear any existing restart timeout
+    if (this.speechRecognitionRestartTimeout) {
+      clearTimeout(this.speechRecognitionRestartTimeout);
+    }
+    
+    this.speechRecognitionRestartTimeout = setTimeout(() => {
+      if (this.isStreaming && !this.speechRecognitionManualStop && !this.speechRecognitionStarting) {
+        this.restartSpeechRecognition();
+      }
+    }, delay);
   }
 
   // Helper function to restart speech recognition
   restartSpeechRecognition() {
-    if (!this.isStreaming || this.speechRecognitionManualStop) {
+    if (!this.isStreaming || this.speechRecognitionManualStop || this.speechRecognitionStarting) {
       return;
     }
     
     try {
       if (this.speechRecognition) {
+        this.speechRecognitionStarting = true;
         this.speechRecognition.start();
         console.log('[AgentAssist] Speech recognition restarted successfully');
       } else {
@@ -337,15 +566,11 @@ class AgentAssistSidebar {
       }
     } catch (e) {
       console.error('[AgentAssist] Failed to restart speech recognition:', e);
+      this.speechRecognitionStarting = false;
       
       // Try to recreate after delay if still streaming
       if (this.isStreaming && !this.speechRecognitionManualStop) {
-        setTimeout(() => {
-          if (this.isStreaming && !this.speechRecognitionManualStop) {
-            console.log('[AgentAssist] Attempting to recreate speech recognition...');
-            this.startLocalSpeechRecognition();
-          }
-        }, 2000);
+        this.scheduleSpeechRecognitionRestart(2000);
       }
     }
   }
@@ -390,56 +615,52 @@ class AgentAssistSidebar {
 
   // New function to add transcript without any logging
   addTranscriptOnly(speaker, text, timestamp) {
-    this.state.transcripts.push({ speaker, text, timestamp: timestamp || Date.now() });
-    if (this.state.currentTab === 'script') this.renderCurrentTab();
+  // Filter out system/meta messages from appearing in transcript tab
+  if (!speaker || speaker.toLowerCase() === 'system') return;
+  this.state.transcripts.push({ speaker, text, timestamp: timestamp || Date.now() });
+  if (this.state.currentTab === 'script') this.renderCurrentTab();
   }
 
   // Enhanced function to add transcript with proper alignment
   addTranscript(speaker, text, timestamp) {
-    // Determine if this is the user or other participant
-    const isUser = speaker === 'You' || speaker === 'user' || speaker === 'self';
+    if (!speaker) return;
+    if (speaker.toLowerCase() === 'system') { // suppress system messages in visible transcript
+      console.log('[AgentAssist][SYSTEM]', text);
+      return;
+    }
+    const isUser = /^(you|user|self)$/i.test(speaker);
     const displaySpeaker = isUser ? 'You' : (speaker === 'other' ? 'Other Participant' : speaker);
-    
-    console.log(`[AgentAssist] Adding transcript - Speaker: ${displaySpeaker}, Text: ${text}`);
-    
-    this.state.transcripts.push({ 
-      speaker: displaySpeaker, 
-      text: text.trim(), 
-      timestamp: timestamp || Date.now(),
-      isUser: isUser
-    });
-    
+    console.log(`[AgentAssist][TRANSCRIPT] + ${displaySpeaker}: ${text}`);
+    this.state.transcripts.push({ speaker: displaySpeaker, text: (text||'').trim(), timestamp: timestamp || Date.now(), isUser });
     if (this.state.currentTab === 'script') this.renderCurrentTab();
   }
 
   // Start capturing tab audio for other participants
   async startTabAudioCapture() {
     try {
-      console.log('[AgentAssist] Starting other participants audio capture...');
+      console.log('[AgentAssist][REMOTE] Starting other participants audio capture...');
       
       // Method 1: Use chrome.tabCapture API first (most reliable for tab audio)
       try {
-        console.log('[AgentAssist] Trying chrome.tabCapture API for Google Meet audio...');
+        console.log('[AgentAssist][REMOTE] Trying chrome.tabCapture API for Google Meet audio...');
         const response = await chrome.runtime.sendMessage({ type: 'captureTabAudio' });
         
         if (response && response.success) {
-          console.log('[AgentAssist] Chrome tab capture successful');
-          console.log('[AgentAssist] Stream info:', response);
+          console.log('[AgentAssist][REMOTE] Chrome tab capture successful');
+          console.log('[AgentAssist][REMOTE] Stream info:', response);
           this.setupChromeTabAudioProcessing(response);
           return;
         } else {
-          console.log('[AgentAssist] Chrome tab capture failed:', response?.error);
+          console.log('[AgentAssist][REMOTE] Chrome tab capture failed:', response?.error);
         }
       } catch (chromeError) {
-        console.log('[AgentAssist] Chrome tab capture error:', chromeError.message);
+        console.log('[AgentAssist][REMOTE] Chrome tab capture error:', chromeError.message);
       }
       
       // Method 2: Try getDisplayMedia with specific constraints for tab sharing
       try {
-        console.log('[AgentAssist] Requesting tab audio capture via screen sharing...');
-        
-        // Show instruction message to user
-        this.addTranscript('system', '🎤 To capture other participants: When prompted, select "Chrome Tab" and choose this Google Meet tab, then check "Share tab audio"');
+        console.log('[AgentAssist][REMOTE] Requesting tab audio capture via screen sharing...');
+        console.log('[AgentAssist][REMOTE] IMPORTANT: When prompted, select "Chrome Tab" for this Meet tab and enable "Share tab audio"');
         
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
@@ -456,18 +677,18 @@ class AgentAssistSidebar {
           preferCurrentTab: true  // Prefer current tab
         });
         
-        console.log('[AgentAssist] Display media capture successful');
-        console.log('[AgentAssist] Audio tracks found:', stream.getAudioTracks().length);
-        console.log('[AgentAssist] Video tracks found:', stream.getVideoTracks().length);
+        console.log('[AgentAssist][REMOTE] Display media capture successful');
+        console.log('[AgentAssist][REMOTE] Audio tracks found:', stream.getAudioTracks().length);
+        console.log('[AgentAssist][REMOTE] Video tracks found:', stream.getVideoTracks().length);
         
         if (stream.getAudioTracks().length > 0) {
-          console.log('[AgentAssist] Got audio from display capture!');
-          this.addTranscript('system', '✅ Other participants audio capture active!');
+          console.log('[AgentAssist][REMOTE] Got audio from display capture!');
+          console.log('[AgentAssist][REMOTE] Other participants audio capture active');
           this.setupOtherParticipantAudioProcessing(stream);
           return;
         } else {
-          console.log('[AgentAssist] No audio in display stream. User may not have selected "Share tab audio"');
-          this.addTranscript('system', '⚠️ No audio captured. Next time, please check "Share tab audio" when sharing the Chrome tab');
+          console.log('[AgentAssist][REMOTE] No audio in display stream. User may not have selected "Share tab audio"');
+          console.log('[AgentAssist][REMOTE] WARNING: No tab audio captured (likely Share tab audio unchecked). Falling back to visual detection.');
           // Keep video stream to detect visual speaking cues
           this.setupVideoBasedDetection(stream);
           // Also try enhanced visual detection
@@ -476,20 +697,20 @@ class AgentAssistSidebar {
         }
         
       } catch (displayError) {
-        console.log('[AgentAssist] Display media failed:', displayError.message);
+        console.log('[AgentAssist][REMOTE] Display media failed:', displayError.message);
         
         if (displayError.name === 'NotAllowedError') {
-          console.log('[AgentAssist] User denied screen share.');
-          this.addTranscript('system', 'Screen sharing cancelled. Using visual detection for other participants.');
+          console.log('[AgentAssist][REMOTE] User denied screen share.');
+          console.log('[AgentAssist][REMOTE] WARNING: Screen sharing cancelled. Using visual detection.');
         } else if (displayError.name === 'NotFoundError') {
-          console.log('[AgentAssist] No screen sharing source selected.');
-          this.addTranscript('system', 'No sharing source selected. Using visual detection for other participants.');
+          console.log('[AgentAssist][REMOTE] No screen sharing source selected.');
+          console.log('[AgentAssist][REMOTE] WARNING: No sharing source selected. Using visual detection.');
         }
       }
       
-      // Method 3: Try system audio capture
+      // Method 3: Try system audio capture (Windows/macOS)
       try {
-        console.log('[AgentAssist] Trying system audio capture...');
+        console.log('[AgentAssist][REMOTE] Trying system audio capture...');
         
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: false,
@@ -502,134 +723,283 @@ class AgentAssistSidebar {
         });
         
         if (stream.getAudioTracks().length > 0) {
-          console.log('[AgentAssist] System audio capture successful!');
+          console.log('[AgentAssist][REMOTE] System audio capture successful!');
           this.setupOtherParticipantAudioProcessing(stream);
           return;
         }
         
       } catch (systemError) {
-        console.log('[AgentAssist] System audio capture failed:', systemError.message);
+        console.log('[AgentAssist][REMOTE] System audio capture failed:', systemError.message);
       }
       
-      // Method 4: Enhanced visual detection as fallback
-      console.log('[AgentAssist] Audio capture not available. Using enhanced visual detection for other participants.');
-      this.addTranscript('system', 'Using visual detection for other participants. For best results, try enabling "Share tab audio" when screen sharing.');
+      // Method 4: Try desktop capture with audio (Linux)
+      try {
+        console.log('[AgentAssist][REMOTE] Trying desktop capture with audio...');
+        
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            mediaSource: 'screen'
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+        
+        if (stream.getAudioTracks().length > 0) {
+          console.log('[AgentAssist][REMOTE] Desktop audio capture successful!');
+          this.setupOtherParticipantAudioProcessing(stream);
+          return;
+        }
+        
+      } catch (desktopError) {
+        console.log('[AgentAssist][REMOTE] Desktop audio capture failed:', desktopError.message);
+      }
+      
+      // Method 5: Enhanced visual detection as fallback
+      console.log('[AgentAssist][REMOTE] Audio capture not available. Using enhanced visual detection for other participants.');
+      console.log('[AgentAssist][REMOTE] INFO: Using visual detection for other participants (no audio).');
       this.setupEnhancedSpeakingDetection();
       
     } catch (error) {
-      console.error('[AgentAssist] Tab audio capture error:', error);
+      console.error('[AgentAssist][REMOTE] Tab audio capture error:', error);
+      this.setupEnhancedSpeakingDetection();
+    }
+  }
+
+  // Setup chrome tab audio processing (improved)
+  setupChromeTabAudioProcessing(response) {
+    try {
+      console.log('[AgentAssist][REMOTE] Setting up Chrome tab audio processing...');
+      console.log('[AgentAssist][REMOTE] Response:', response);
+      
+      if (response.success && response.streamId) {
+        console.log('[AgentAssist][REMOTE] Chrome successfully captured Google Meet audio');
+        
+        // Request the actual audio stream from background script
+        chrome.runtime.sendMessage({ 
+          type: 'getTabAudioStream', 
+          streamId: response.streamId 
+        }, (audioStream) => {
+          if (audioStream && audioStream.success) {
+            console.log('[AgentAssist][REMOTE] Received audio stream from background script');
+            this.setupOtherParticipantAudioProcessing(audioStream.stream);
+          } else {
+            console.log('[AgentAssist][REMOTE] Failed to get audio stream, using visual detection');
+            this.setupEnhancedSpeakingDetection();
+          }
+        });
+        
+      } else {
+        console.log('[AgentAssist][REMOTE] Chrome tab capture failed, falling back to visual detection');
+        this.setupEnhancedSpeakingDetection();
+      }
+      
+    } catch (error) {
+      console.error('[AgentAssist][REMOTE] Error setting up Chrome tab audio processing:', error);
       this.setupEnhancedSpeakingDetection();
     }
   }
 
   // Setup audio processing specifically for other participants
-  setupOtherParticipantAudioProcessing(stream) {
+  async setupOtherParticipantAudioProcessing(stream) {
     try {
-      console.log('[AgentAssist] Setting up audio processing for other participants...');
+      console.log('[AgentAssist][REMOTE] Setting up other participants audio processing...');
+      console.log('[AgentAssist][REMOTE] Stream tracks:', stream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled })));
       
-      // Create audio context for processing other participants' audio
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioContext.createMediaStreamSource(stream);
+      // Check if we have audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        console.log('[AgentAssist][REMOTE] No audio tracks found in stream');
+        this.setupEnhancedSpeakingDetection();
+        return;
+      }
       
-      // Create analyzer for volume detection
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 2048;
+      console.log('[AgentAssist][REMOTE] Audio tracks found:', audioTracks.length);
+      audioTracks.forEach((track, index) => {
+        console.log('[AgentAssist][REMOTE] Audio track', index, ':', {
+          id: track.id,
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState
+        });
+      });
       
-      source.connect(analyser);
+      // Create audio context for processing
+      this.remoteAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this.remoteAudioContext;
+      console.log('[AgentAssist][REMOTE] Audio context created, sample rate:', ctx.sampleRate);
       
-      // Monitor audio levels
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+      // Create media stream source
+      const source = ctx.createMediaStreamSource(stream);
+      console.log('[AgentAssist][REMOTE] Media stream source created');
       
-      let isCurrentlySpeaking = false;
-      let speechStartTime = 0;
-      let speechBuffer = [];
-      
-      const checkAudioLevels = () => {
-        if (!this.isStreaming) return;
+      // Load audio worklet for VAD
+      try {
+        await ctx.audioWorklet.addModule(chrome.runtime.getURL('audio-vad-processor.js'));
+        console.log('[AgentAssist][REMOTE] Audio worklet loaded successfully');
         
-        analyser.getByteFrequencyData(dataArray);
-        
-        // Calculate average volume
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const averageVolume = sum / bufferLength;
-        
-        // Detect speech (threshold for other participants)
-        const speechThreshold = 30; // Adjust this value as needed
-        
-        if (averageVolume > speechThreshold) {
-          if (!isCurrentlySpeaking) {
-            console.log('[AgentAssist] Other participant started speaking, volume:', averageVolume);
-            isCurrentlySpeaking = true;
-            speechStartTime = Date.now();
+        // Create VAD processor
+        this.remoteAudioNode = new AudioWorkletNode(ctx, 'vad-processor', {
+          processorOptions: {
+            vadThreshold: 0.013,
+            minMs: 300,
+            maxMs: 8000,
+            silenceMs: 500
           }
-          speechBuffer.push(averageVolume);
-        } else {
-          if (isCurrentlySpeaking) {
-            const speechDuration = Date.now() - speechStartTime;
-            console.log('[AgentAssist] Other participant stopped speaking, duration:', speechDuration + 'ms');
-            
-            // If they spoke for a reasonable duration, simulate transcription
-            if (speechDuration > 500) { // At least 500ms of speech
-              this.simulateOtherParticipantTranscription(speechDuration, Math.max(...speechBuffer));
+        });
+        console.log('[AgentAssist][REMOTE] VAD processor created');
+        
+        // Connect audio pipeline
+        source.connect(this.remoteAudioNode);
+        console.log('[AgentAssist][REMOTE] Audio pipeline connected');
+        
+        // Handle VAD segments
+        this.remoteAudioNode.port.onmessage = (event) => {
+          const data = event.data;
+          if (data?.type === 'segment') {
+            if (!data.enough) {
+              console.log('[AgentAssist][REMOTE] Speech segment too short, skipping');
+              return;
             }
-            
-            isCurrentlySpeaking = false;
-            speechBuffer = [];
+            console.log('[AgentAssist][REMOTE] Speech segment detected, length:', data.samples.length, 'samples');
+            this.handleRemoteSegment(data.samples, data.sampleRate);
           }
-        }
+        };
         
-        requestAnimationFrame(checkAudioLevels);
-      };
-      
-      // Start monitoring
-      checkAudioLevels();
-      
-      // Store references for cleanup
-      this.otherAudioContext = audioContext;
-      this.otherAudioStream = stream;
-      this.otherAudioAnalyser = analyser;
-      
-      console.log('[AgentAssist] Other participants audio processing setup complete');
+        this.remoteAudioNode.port.onmessageerror = e => {
+          console.warn('[AgentAssist][REMOTE] Worklet port error', e);
+        };
+        
+        console.log('[AgentAssist][REMOTE] Other participants audio processing pipeline ready');
+        
+      } catch (err) {
+        console.error('[AgentAssist][REMOTE] AudioWorklet pipeline failed, fallback to legacy VAD:', err);
+        this.setupEnhancedSpeakingDetection();
+      }
       
     } catch (error) {
-      console.error('[AgentAssist] Error setting up other participant audio processing:', error);
-      // Fallback to visual detection
+      console.error('[AgentAssist][REMOTE] Error setting up other participants audio processing:', error);
       this.setupEnhancedSpeakingDetection();
     }
   }
 
-  // Simulate transcription for other participants based on audio detection
-  simulateOtherParticipantTranscription(duration, maxVolume) {
-    const responses = [
-      "Yes, I agree with that",
-      "Can you hear me clearly?",
-      "Let me share my screen",
-      "That sounds like a good idea",
-      "I think we should proceed",
-      "What do you think about this?",
-      "Could you repeat that?",
-      "I'm having some audio issues",
-      "Let's move to the next point",
-      "That makes sense to me"
-    ];
+  handleRemoteSegment(float32, sr) {
+    console.log('[AgentAssist][REMOTE] Processing remote audio segment...');
     
-    // Choose response based on speech characteristics
-    let response;
-    if (duration > 3000) {
-      // Longer speech - more complex response
-      response = responses[Math.floor(Math.random() * responses.length)];
-    } else {
-      // Shorter speech - simpler response
-      const shortResponses = ["Yes", "Okay", "Got it", "Sure", "Right"];
-      response = shortResponses[Math.floor(Math.random() * shortResponses.length)];
+    if (sr !== this.remoteTranscription.sampleRate) {
+      console.log('[AgentAssist][REMOTE] Downsampling from', sr, 'to', this.remoteTranscription.sampleRate);
+      float32 = this.downsampleFloat32(float32, sr, this.remoteTranscription.sampleRate);
+      sr = this.remoteTranscription.sampleRate;
     }
     
-    console.log(`[AgentAssist] Simulating other participant speech: "${response}" (${duration}ms, vol: ${maxVolume})`);
-    this.addTranscript('other', response);
+    this.sendRemoteSegment(float32, sr);
+  }
+
+  sendRemoteSegment(float32, sr) {
+    console.log('[AgentAssist][REMOTE] Sending remote audio segment to Azure STT...');
+    
+    const rt = this.remoteTranscription;
+    if (!rt.endpoint || !rt.apiKey) {
+      if (!rt.warned) {
+        console.log('[AgentAssist][REMOTE] Azure STT not configured. Please set azureSttRegion and azureSttApiKey in chrome.storage.sync');
+        rt.warned = true;
+      }
+      rt.enabled = false; return;
+    }
+    
+    if (rt.sending) { 
+      console.log('[AgentAssist][REMOTE] Busy, dropping segment'); 
+      return; 
+    }
+    
+    rt.sending = true;
+    console.log('[AgentAssist][REMOTE] Processing remote audio segment...');
+    
+    // Convert audio to proper format for Azure STT
+    const wavBlob = this.floatToWavBlob(float32, sr);
+    console.log('[AgentAssist][REMOTE] Audio converted to WAV, size:', wavBlob.size, 'bytes');
+    
+    // Build Azure STT URL with parameters
+    const url = new URL(rt.endpoint);
+    url.searchParams.append('language', rt.language);
+    url.searchParams.append('format', rt.format);
+    url.searchParams.append('profanityFilter', rt.profanityFilter);
+    if (rt.enableWordLevelTimestamps) {
+      url.searchParams.append('enableWordLevelTimestamps', 'true');
+    }
+    
+    console.log('[AgentAssist][REMOTE] Sending to Azure STT:', url.toString());
+    
+    fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': rt.apiKey,
+        'Content-Type': 'audio/wav',
+        'Accept': 'application/json'
+      },
+      body: wavBlob
+    }).then(response => {
+      console.log('[AgentAssist][REMOTE] Azure STT response status:', response.status);
+      if (!response.ok) {
+        throw new Error(`Azure STT error: ${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    }).then(json => {
+      console.log('[AgentAssist][REMOTE] Azure STT response:', json);
+      
+      // Handle Azure STT response format
+      let text = '';
+      if (json.DisplayText) {
+        text = json.DisplayText;
+      } else if (json.NBest && json.NBest.length > 0) {
+        text = json.NBest[0].Display || json.NBest[0].Lexical;
+      } else if (json.Text) {
+        text = json.Text;
+      }
+      
+      if (text && text.trim()) {
+        console.log('[AgentAssist][REMOTE] Transcribed text:', text);
+        this.addTranscript('Other Participant', text.trim(), Date.now());
+      } else {
+        console.log('[AgentAssist][REMOTE] No text in Azure STT response');
+      }
+    }).catch(err => {
+      console.error('[AgentAssist][REMOTE] Azure STT error:', err);
+    }).finally(() => { 
+      rt.sending = false; 
+      console.log('[AgentAssist][REMOTE] Azure STT request completed');
+    });
+  }
+
+  floatToWavBlob(float32, sampleRate) {
+    // convert to 16-bit PCM and wrap WAV header
+    const pcm16 = new Int16Array(float32.length);
+    for (let i=0;i<float32.length;i++){ let s = Math.max(-1, Math.min(1, float32[i])); pcm16[i] = s<0? s*0x8000 : s*0x7FFF; }
+    const bytesPerSample = 2;
+    const blockAlign = 1 * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const buffer = new ArrayBuffer(44 + pcm16.length * bytesPerSample);
+    const view = new DataView(buffer);
+    let offset = 0;
+    const writeStr = (s)=>{ for (let i=0;i<s.length;i++) view.setUint8(offset++, s.charCodeAt(i)); };
+    writeStr('RIFF');
+    view.setUint32(offset, 36 + pcm16.length * bytesPerSample, true); offset += 4;
+    writeStr('WAVE');
+    writeStr('fmt ');
+    view.setUint32(offset,16,true); offset+=4; // subchunk1 size
+    view.setUint16(offset,1,true); offset+=2; // PCM
+    view.setUint16(offset,1,true); offset+=2; // channels
+    view.setUint32(offset,sampleRate,true); offset+=4;
+    view.setUint32(offset,byteRate,true); offset+=4;
+    view.setUint16(offset,blockAlign,true); offset+=2;
+    view.setUint16(offset,16,true); offset+=2; // bits per sample
+    writeStr('data');
+    view.setUint32(offset, pcm16.length * bytesPerSample, true); offset+=4;
+    for (let i=0;i<pcm16.length;i++,offset+=2) view.setInt16(offset, pcm16[i], true);
+    return new Blob([buffer], { type: 'audio/wav' });
   }
 
   // Enhanced visual speaking detection for when audio capture fails
@@ -710,76 +1080,8 @@ class AgentAssistSidebar {
     return name;
   }
 
-  // Generate realistic responses for other participants
-  simulateRealisticResponse(participantName) {
-    const contextualResponses = [
-      `Thanks for that clarification`,
-      `I can see your point`,
-      `Let me think about that`,
-      `Good question`,
-      `I agree with your approach`,
-      `That's a valid concern`,
-      `Can we discuss this further?`,
-      `I have a different perspective`,
-      `Let's explore this option`,
-      `That sounds reasonable`
-    ];
-    
-    const response = contextualResponses[Math.floor(Math.random() * contextualResponses.length)];
-    console.log(`[AgentAssist] Visual detection response from ${participantName}: ${response}`);
-    this.addTranscript('other', `${participantName}: ${response}`);
-  }
-
-  // Setup chrome tab audio processing (improved)
-  setupChromeTabAudioProcessing(response) {
-    try {
-      console.log('[AgentAssist] Setting up Chrome tab audio processing for Google Meet...');
-      console.log('[AgentAssist] Response:', response);
-      
-      if (response.hasAudio && response.streamId) {
-        console.log('[AgentAssist] Chrome successfully captured Google Meet audio');
-        
-        // Listen for the actual stream data from background script
-        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-          if (message.type === 'tabAudioCaptured' && message.success) {
-            console.log('[AgentAssist] Received tab audio stream from background script');
-            this.handleChromeTabAudio(message.streamId);
-          }
-        });
-        
-        // Also try to get the stream immediately
-        this.handleChromeTabAudio(response.streamId);
-        
-      } else {
-        console.log('[AgentAssist] Chrome tab capture has no audio, falling back to visual detection');
-        this.setupEnhancedSpeakingDetection();
-      }
-      
-    } catch (error) {
-      console.error('[AgentAssist] Error setting up Chrome tab audio processing:', error);
-      this.setupEnhancedSpeakingDetection();
-    }
-  }
-
-  // Handle chrome tab audio stream
-  async handleChromeTabAudio(streamId) {
-    try {
-      console.log('[AgentAssist] Processing Chrome tab audio stream:', streamId);
-      
-      // For chrome.tabCapture, the stream is managed by the background script
-      // We need to set up audio monitoring differently
-      
-      // Set up enhanced detection since we can't directly access the stream
-      this.setupEnhancedSpeakingDetection();
-      
-      // Add a note that tab audio is being captured
-      this.addTranscript('system', 'Google Meet tab audio capture active - monitoring for other participants');
-      
-    } catch (error) {
-      console.error('[AgentAssist] Error handling Chrome tab audio:', error);
-      this.setupEnhancedSpeakingDetection();
-    }
-  }
+  // Disabled fake generation; now only logs indicator.
+  simulateRealisticResponse(participantName) { console.log('[AgentAssist][VISUAL] Speaking indicator for', participantName); }
 
   // Setup video-based detection from screen sharing
   setupVideoBasedDetection(stream) {
@@ -1000,28 +1302,7 @@ class AgentAssistSidebar {
     return name;
   }
 
-  // Simulate speech from other participants (for testing)
-  simulateOtherParticipantSpeech(participantName) {
-    // This is a placeholder - in a real implementation, you'd have actual audio processing
-    // For now, we'll add a test message to show the feature works
-    
-    if (!this.lastSimulatedSpeech || Date.now() - this.lastSimulatedSpeech > 10000) {
-      const testMessages = [
-        "I agree with that point",
-        "Can you share your screen?",
-        "Let me check on that",
-        "That sounds good to me",
-        "What do you think about this approach?"
-      ];
-      
-      const randomMessage = testMessages[Math.floor(Math.random() * testMessages.length)];
-      
-      console.log(`[AgentAssist] Simulating speech from ${participantName}: ${randomMessage}`);
-      this.addTranscript('other', `${participantName}: ${randomMessage}`);
-      
-      this.lastSimulatedSpeech = Date.now();
-    }
-  }
+  simulateOtherParticipantSpeech(participantName) { console.log('[AgentAssist][VISUAL] Possible speech by', participantName); }
 
   // Observe Google Meet participants
   observeParticipants() {
@@ -1165,8 +1446,30 @@ class AgentAssistSidebar {
       clearInterval(this.speakingCheckInterval);
       this.speakingCheckInterval = null;
     }
+
+  if (this.remoteAudioProcessor) { try { this.remoteAudioProcessor.disconnect(); } catch(e){} this.remoteAudioProcessor = null; }
+  if (this.remoteAudioContext) { try { this.remoteAudioContext.close(); } catch(e){} this.remoteAudioContext = null; }
+  if (this.remoteAudioNode) { try { this.remoteAudioNode.disconnect(); this.remoteAudioNode.port.close(); } catch(e){} this.remoteAudioNode = null; }
     
     console.log('[AgentAssist] All audio resources cleaned up');
+  }
+
+  // Configure remote STT endpoint + key, persists if possible
+  setRemoteSttConfig(endpoint, apiKey) {
+    this.remoteTranscription.endpoint = endpoint || null;
+    this.remoteTranscription.apiKey = apiKey || null;
+    this.remoteTranscription.enabled = !!endpoint;
+    if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
+      try {
+        chrome.storage.sync.set({
+          remoteSttEndpoint: this.remoteTranscription.endpoint,
+          remoteSttApiKey: this.remoteTranscription.apiKey
+        }, () => console.log('[AgentAssist][REMOTE] STT config saved'));
+      } catch(e){ console.warn('[AgentAssist][REMOTE] Persist error', e); }
+    } else {
+      console.log('[AgentAssist][REMOTE] No chrome.storage available (page context).');
+    }
+    console.log('[AgentAssist][REMOTE] Endpoint set:', !!this.remoteTranscription.endpoint);
   }
 
   setupDraggable() {
@@ -1346,8 +1649,7 @@ show() {
   }
 
   addSuggestion(content) { this.state.suggestions.push(content); if (this.state.currentTab==='assist') this.renderCurrentTab(); }
-
-  addTranscript(speaker, text, timestamp) { this.state.transcripts.push({ speaker, text, timestamp: timestamp||Date.now() }); if (this.state.currentTab==='script') this.renderCurrentTab(); }
+  // (Note) addTranscript earlier in class handles filtering; do not redefine here.
   updateScore(score, feedback) { this.state.scores.push({ score, feedback, timestamp: Date.now(), badge: score>=80?'Positive':'Neutral' }); if (this.state.currentTab==='score') this.renderCurrentTab(); }
   addCoachingTip(category, title, content) { this.state.coaching.push({ category, title, content, timestamp: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
   addChatMessage(role, text) { this.state.coachChat.push({ role, text, ts: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
@@ -1455,6 +1757,45 @@ show() {
     if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { this.switchTab(tabs[idx].dataset.tab); }
   }
 
+  // Configure Azure STT endpoint and API key
+  configureAzureStt(region, apiKey) {
+    if (region && apiKey) {
+      this.remoteTranscription.region = region;
+      this.remoteTranscription.endpoint = `https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`;
+      this.remoteTranscription.apiKey = apiKey;
+      this.remoteTranscription.enabled = true;
+      
+      // Persist to chrome storage
+      try {
+        chrome.storage.sync.set({
+          azureSttRegion: this.remoteTranscription.region,
+          azureSttApiKey: this.remoteTranscription.apiKey
+        });
+      } catch(e) { /* storage not available */ }
+      
+      console.log('[AgentAssist][AZURE] Azure STT configured successfully');
+      console.log('[AgentAssist][AZURE] Region:', region);
+      console.log('[AgentAssist][AZURE] Endpoint:', this.remoteTranscription.endpoint);
+    } else {
+      this.remoteTranscription.enabled = false;
+      console.log('[AgentAssist][AZURE] Azure STT configuration cleared');
+    }
+  }
+
+  // Legacy function for backward compatibility
+  setRemoteSttConfig(endpoint, apiKey) {
+    console.log('[AgentAssist][LEGACY] setRemoteSttConfig called - please use configureAzureStt(region, apiKey) instead');
+    if (endpoint && apiKey) {
+      // Try to extract region from endpoint
+      const match = endpoint.match(/https:\/\/([^.]+)\.stt\.speech\.microsoft\.com/);
+      if (match) {
+        this.configureAzureStt(match[1], apiKey);
+      } else {
+        console.log('[AgentAssist][LEGACY] Could not extract region from endpoint, please use configureAzureStt directly');
+      }
+    }
+  }
+
 }
 
 // Initialize the Agent Assist extension
@@ -1463,6 +1804,35 @@ let agentAssist;
 function initializeAgentAssist() { 
   if (window.location.hostname === 'meet.google.com' && !agentAssist) { 
     agentAssist = new AgentAssistSidebar(); 
+    // Expose global helper for quick config from page console
+    window.AgentAssistConfigureAzureSTT = (region, apiKey) => {
+      if (!agentAssist) return;
+      agentAssist.configureAzureStt(region, apiKey);
+    };
+    
+    // Legacy helper for backward compatibility
+    window.AgentAssistSetRemoteSTT = (endpoint, apiKey) => {
+      if (!agentAssist) return;
+      agentAssist.setRemoteSttConfig(endpoint, apiKey);
+    };
+    
+    // Debug helper to check speech recognition status
+    window.AgentAssistDebugStatus = () => {
+      if (!agentAssist) {
+        console.log('Agent Assist not initialized');
+        return;
+      }
+      console.log('Agent Assist Status:', {
+        isStreaming: agentAssist.isStreaming,
+        speechRecognitionStarting: agentAssist.speechRecognitionStarting,
+        speechRecognitionManualStop: agentAssist.speechRecognitionManualStop,
+        speechRecognition: agentAssist.speechRecognition ? {
+          state: agentAssist.speechRecognition.state,
+          handlersSet: agentAssist.speechRecognition._handlersSet
+        } : null,
+        azureConfigured: !!(agentAssist.remoteTranscription.endpoint && agentAssist.remoteTranscription.apiKey)
+      });
+    };
   } 
 }
 
@@ -1494,9 +1864,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Allow page scripts / console in page context to configure STT via postMessage
+window.addEventListener('message', (evt) => {
+  try {
+    if (!evt || evt.source !== window) return;
+    const d = evt.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'AA_CONFIGURE_AZURE_STT' && agentAssist) {
+      agentAssist.configureAzureStt(d.region, d.apiKey);
+      console.log('[AgentAssist][AZURE] Config updated via postMessage');
+    } else if (d.type === 'AA_SET_REMOTE_STT' && agentAssist) {
+      agentAssist.setRemoteSttConfig(d.endpoint, d.apiKey);
+      console.log('[AgentAssist][REMOTE] Config updated via postMessage');
+    }
+  } catch(e) {}
+});
+
 // Handle page unload to cleanup connections
 window.addEventListener('beforeunload', () => {
   if (agentAssist && agentAssist.isStreaming) {
-    agentAssist.stopRealtimeStreaming();
+    agentAssist.stopLocalStreaming();
+  }
+  
+  // Clear any pending timeouts
+  if (agentAssist && agentAssist.speechRecognitionRestartTimeout) {
+    clearTimeout(agentAssist.speechRecognitionRestartTimeout);
   }
 });
