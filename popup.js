@@ -64,6 +64,68 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
   
+  // Configure Azure STT button
+  const configureAzureBtn = document.getElementById('configureAzure');
+  const azureModal = document.getElementById('azureModal');
+  const azureRegion = document.getElementById('azureRegion');
+  const azureApiKey = document.getElementById('azureApiKey');
+  const saveAzureBtn = document.getElementById('saveAzure');
+  const cancelAzureBtn = document.getElementById('cancelAzure');
+  
+  // Load existing Azure STT configuration
+  chrome.storage.sync.get(['azureSttRegion', 'azureSttApiKey'], function(result) {
+    if (result.azureSttRegion) {
+      azureRegion.value = result.azureSttRegion;
+    }
+    if (result.azureSttApiKey) {
+      azureApiKey.value = result.azureSttApiKey;
+    }
+  });
+  
+  configureAzureBtn.addEventListener('click', function() {
+    azureModal.style.display = 'block';
+  });
+  
+  saveAzureBtn.addEventListener('click', function() {
+    const region = azureRegion.value.trim();
+    const apiKey = azureApiKey.value.trim();
+    
+    if (region && apiKey) {
+      chrome.storage.sync.set({
+        azureSttRegion: region,
+        azureSttApiKey: apiKey
+      }, function() {
+        // Send configuration to content script
+        chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+          const currentTab = tabs[0];
+          if (currentTab.url && currentTab.url.includes('meet.google.com')) {
+            chrome.tabs.sendMessage(currentTab.id, { 
+              type: 'AA_CONFIGURE_AZURE_STT',
+              region: region,
+              apiKey: apiKey
+            });
+          }
+        });
+        
+        azureModal.style.display = 'none';
+        alert('Azure STT configuration saved successfully!');
+      });
+    } else {
+      alert('Please enter both region and API key.');
+    }
+  });
+  
+  cancelAzureBtn.addEventListener('click', function() {
+    azureModal.style.display = 'none';
+  });
+  
+  // Close modal when clicking outside
+  azureModal.addEventListener('click', function(e) {
+    if (e.target === azureModal) {
+      azureModal.style.display = 'none';
+    }
+  });
+  
   // Update meeting duration every second
   let startTime = Date.now();
   setInterval(function() {

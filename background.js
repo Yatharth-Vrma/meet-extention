@@ -2,6 +2,9 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('Agent Assist extension installed');
 });
 
+// Store captured streams
+const capturedStreams = new Map();
+
 // Handle tab audio capture requests
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'captureTabAudio') {
@@ -15,11 +18,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           console.error('Tab capture error:', chrome.runtime.lastError);
           sendResponse({ success: false, error: chrome.runtime.lastError.message });
         } else {
+          console.log('Tab capture successful, stream ID:', stream.id);
+          capturedStreams.set(stream.id, stream);
           sendResponse({ success: true, streamId: stream.id });
         }
       }
     );
     return true; // Keep the message channel open for async response
+  }
+  
+  if (message.type === 'getTabAudioStream') {
+    const streamId = message.streamId;
+    const stream = capturedStreams.get(streamId);
+    
+    if (stream) {
+      console.log('Returning captured stream:', streamId);
+      sendResponse({ success: true, stream: stream });
+    } else {
+      console.error('Stream not found:', streamId);
+      sendResponse({ success: false, error: 'Stream not found' });
+    }
+    return true;
   }
   
   if (message.type === 'getTabInfo') {
