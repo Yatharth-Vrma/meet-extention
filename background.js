@@ -66,6 +66,27 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       // Script might already be injected, ignore error
       console.log('Content script injection result:', err);
     });
+    
+    // Send a message to ensure the toggle button is visible
+    setTimeout(() => {
+      chrome.tabs.sendMessage(tabId, { type: 'ensureToggleButton' });
+    }, 2000);
+    
+    // Periodically check to make sure toggle button remains visible
+    const buttonCheckInterval = setInterval(() => {
+      chrome.tabs.get(tabId, (tabInfo) => {
+        // Clear interval if tab no longer exists
+        if (chrome.runtime.lastError || !tabInfo) {
+          clearInterval(buttonCheckInterval);
+          return;
+        }
+        
+        // Send message to ensure toggle button is still visible, but don't auto-show extension
+        chrome.tabs.sendMessage(tabId, { type: 'ensureToggleButton', autoShow: false }).catch(() => {
+          // Tab might be navigating, ignore errors
+        });
+      });
+    }, 5000); // Check every 5 seconds
   }
 });
 
