@@ -87,41 +87,74 @@
   font-family: var(--aa-font-family) !important;
 }
 
-/* Toggle Button - Positioned to avoid conflicts - SINGLE BUTTON */
+/* Toggle Button - Always Visible Fixed Toggle */
 .agent-assist-toggle {
-  position: fixed;
-  top: 50%;
-  right: 0.625rem;  /* 10px from right edge */
-  transform: translateY(-50%);  /* Center vertically */
-  z-index: 999998;
-  width: 3rem;
-  height: 3rem;
-  background: var(--aa-primary);
-  border: none;
-  border-radius: 50%;
-  color: white;
-  cursor: pointer;
-  box-shadow: var(--aa-shadow-primary);
-  transition: all var(--aa-transition-base);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0;
+  position: fixed !important;
+  top: 50% !important;
+  right: 0.625rem !important;  /* 10px from right edge */
+  transform: translateY(-50%) !important;  /* Center vertically */
+  z-index: 999997 !important; /* One less than sidebar to allow overlap */
+  width: 3.5rem !important;
+  height: 3.5rem !important;
+  background: white !important; /* Changed to white to better show the logo */
+  border: 2px solid var(--aa-primary) !important;
+  border-radius: 50% !important;
+  color: white !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2) !important;
+  transition: all var(--aa-transition-base) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0 !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  /* Add preventing styles to ensure it can't be hidden by other CSS */
+  clip: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+/* ID-specific selector for even higher specificity */
+#agent-assist-fixed-toggle {
+  display: flex !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 .agent-assist-toggle:hover {
-  background: var(--aa-primary-hover);
-  transform: scale(1.05);
+  background: var(--aa-primary-hover) !important;
+  transform: translateY(-50%) scale(1.1) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25) !important;
+}
+
+.agent-assist-toggle:active {
+  transform: translateY(-50%) scale(0.95) !important;
 }
 
 .agent-assist-toggle:focus {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: 2px;
+  outline: 3px solid var(--aa-primary) !important;
+  outline-offset: 3px !important;
 }
 
-.agent-assist-toggle svg {
-  width: 1.375rem;
-  height: 1.375rem;
+.agent-assist-toggle img.agent-assist-toggle-logo {
+  width: 2.25rem !important;
+  height: 2.25rem !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+}
+
+/* Added animation to make the button more noticeable */
+@keyframes pulseToggle {
+  0% { box-shadow: 0 0 0 0 rgba(86, 90, 221, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(86, 90, 221, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(86, 90, 221, 0); }
+}
+
+.agent-assist-toggle {
+  animation: pulseToggle 2s infinite;
 }
 
 /* Main Sidebar Container - Following Figma Design */
@@ -145,9 +178,16 @@
   isolation: isolate; /* Prevents CSS conflicts */
 }
 
-/* Disable transitions for user-positioned (dragged) sidebars */
+/* Disable transitions for user-positioned (dragged) sidebars - but allow hiding */
 .agent-assist-sidebar[data-user-positioned] {
   transition: none !important;
+}
+
+.agent-assist-sidebar[data-user-positioned]:not(.is-visible) {
+  transform: translateX(calc(100% + 2rem)) !important;
+}
+
+.agent-assist-sidebar[data-user-positioned].is-visible {
   transform: none !important;
 }
 
@@ -313,36 +353,42 @@
   flex-shrink: 0;
 }
 
-/* Header Action Buttons - Vertical Stack Layout */
+/* Header Action Buttons - Updated Layout */
+/* Minimize button - Top button */
 .minimize-toggle {
-  /* Minimize button - Top button */
   width: 2rem;        /* 32px */
   height: 2rem;       /* 32px */
+  background: none;
   border: none;
-  border-radius: var(--aa-radius-sm);
-  background: var(--aa-bg-surface);
+  border-radius: var(--aa-radius-sm);  /* 4px */
   cursor: pointer;
+  padding: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all var(--aa-transition-base);
-  color: #646466;
+  position: relative;
+  z-index: 1000000;
+  pointer-events: auto;
+  color: var(--aa-text-secondary);
   margin: 0;  /* Remove margins for vertical layout */
 }
 
 .minimize-toggle:hover {
-  background: var(--aa-border-light);
+  background-color: var(--aa-border-light);
   color: var(--aa-primary);
+  transform: scale(1.05);
 }
 
-.minimize-toggle:focus {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: 1px;
+.minimize-toggle:active {
+  transform: scale(0.95);
 }
 
 .minimize-toggle svg {
-  width: 1.25rem;     /* 20px */
-  height: 1.25rem;    /* 20px */
+  width: 1rem;        /* 16px */
+  height: 1rem;       /* 16px */
+  fill: currentColor;
+  transition: fill var(--aa-transition-base);
 }
 
 .mic-toggle {

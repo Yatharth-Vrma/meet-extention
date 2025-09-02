@@ -71,18 +71,29 @@ class AgentAssistSidebar {
   }
 
   init() {
+    // Create toggle button first thing
     this.ensureToggleButton();
+    
     this.createSidebar();
     // Check font loading
     this.checkFontLoading();
     // Removed connectRealtimeWebSocket() for local development
     this.observeEnvironment();
     this.scheduleContextUpdates();
-    if (window.location.hostname === 'meet.google.com') {
-      setTimeout(() => this.show(), 1200);
-    }
+    
+    // Make sure the toggle button is still visible, but don't show the extension automatically
+    setTimeout(() => {
+      this.ensureToggleButton();
+      // Removed automatic show() - user will need to click the button
+    }, 1200);
+    
     // Connect results websocket immediately
     this.connectResultsWebSocket();
+    
+    // Set up a periodic check to ensure the toggle button stays visible
+    setInterval(() => {
+      this.ensureToggleButton();
+    }, 2000);
   }  generateSessionId() {
     return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   }
@@ -115,16 +126,118 @@ class AgentAssistSidebar {
   }
 
   ensureToggleButton() {
-    if (this.toggleButton && document.body.contains(this.toggleButton)) return;
+    // If button exists, just ensure it's visible and return
+    if (this.toggleButton && document.body.contains(this.toggleButton)) {
+      // Always make sure toggle button is visible
+      this.toggleButton.style.display = 'flex';
+      this.toggleButton.style.opacity = '1';
+      this.toggleButton.style.zIndex = '999998';
+      return;
+    }
+    
+    // Create new toggle button with logo image
     const btn = document.createElement('button');
     btn.className = 'agent-assist-toggle';
+    btn.id = 'agent-assist-fixed-toggle'; // Add ID for easier targeting
     btn.type = 'button';
     btn.setAttribute('aria-label', 'Toggle Agent Assist');
     btn.setAttribute('aria-pressed', 'false');
-    btn.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M4 12h2"/><path d="M18 12h2"/><path d="M12 4v2"/><path d="M12 18v2"/><path d="M7.8 7.8l1.4 1.4"/><path d="M14.8 14.8l1.4 1.4"/><path d="M16.2 7.8l-1.4 1.4"/><path d="M9.2 14.8l-1.4 1.4"/></svg>';
-    btn.addEventListener('click', () => this.toggle());
+    
+    // Use the logo image instead of SVG
+    const logoUrl = chrome.runtime.getURL('icons/logo.png');
+    btn.innerHTML = `<img src="${logoUrl}" alt="Toggle Agent Assist" class="agent-assist-toggle-logo">`;
+    
+    // Enhanced click handler for better reliability
+    const clickHandler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('[TOGGLE] External button clicked - current state:', this.state.visible);
+      this.toggle();
+    };
+    
+    btn.addEventListener('click', clickHandler);
+    
+    // Add to document
     document.body.appendChild(btn);
     this.toggleButton = btn;
+    
+    // Set proper styles to ensure it's always visible and fixed
+    btn.style.position = 'fixed';
+    btn.style.zIndex = '999998';
+    btn.style.cursor = 'pointer';
+    btn.style.display = 'flex';
+    btn.style.opacity = '1';
+    btn.style.pointerEvents = 'auto';
+    
+    // Make absolutely sure it's fixed and unchangeable
+    Object.defineProperty(btn.style, 'display', {
+      get: function() { return 'flex'; },
+      set: function(v) { /* Ignore attempts to change display */ }
+    });
+    
+    // Add observer to make sure it stays visible
+    this.startToggleButtonObserver();
+    
+    console.log('[AgentAssist] Fixed external toggle button created');
+    
+    // Add global debugging functions
+    window.debugAgentAssist = () => {
+      console.log('=== Agent Assist Debug Info ===');
+      console.log('State visible:', this.state.visible);
+      console.log('Sidebar exists:', !!this.sidebar);
+      console.log('Toggle button exists:', !!this.toggleButton);
+      if (this.sidebar) {
+        console.log('Sidebar classes:', this.sidebar.className);
+        console.log('Sidebar transform:', this.sidebar.style.transform);
+        console.log('Sidebar opacity:', this.sidebar.style.opacity);
+        console.log('Sidebar pointer-events:', this.sidebar.style.pointerEvents);
+        console.log('Sidebar data-user-positioned:', this.sidebar.hasAttribute('data-user-positioned'));
+      }
+      if (this.toggleButton) {
+        console.log('Toggle button display:', this.toggleButton.style.display);
+        console.log('Toggle button opacity:', this.toggleButton.style.opacity);
+      }
+    };
+    
+    window.forceHideAgentAssist = () => {
+      console.log('=== Force Hide Agent Assist ===');
+      this.hide();
+    };
+    
+    window.forceShowAgentAssist = () => {
+      console.log('=== Force Show Agent Assist ===');
+      this.show();
+    };
+  }
+  
+  // New method to ensure the toggle button stays visible
+  startToggleButtonObserver() {
+    if (!this.toggleButton) return;
+    
+    // Use MutationObserver to keep button visible if something tries to hide it
+    const observer = new MutationObserver((mutations) => {
+      if (this.toggleButton) {
+        // Force visibility regardless of what other scripts might do
+        this.toggleButton.style.display = 'flex';
+        this.toggleButton.style.opacity = '1';
+        this.toggleButton.style.zIndex = '999998';
+      }
+    });
+    
+    // Observe the button for style changes
+    observer.observe(this.toggleButton, {
+      attributes: true,
+      attributeFilter: ['style', 'class']
+    });
+    
+    // Also set interval as a backup to ensure visibility
+    setInterval(() => {
+      if (this.toggleButton && document.body.contains(this.toggleButton)) {
+        this.toggleButton.style.display = 'flex';
+        this.toggleButton.style.opacity = '1';
+        this.toggleButton.style.zIndex = '999998';
+      }
+    }, 500);
   }
 
   createSidebar() {
@@ -173,10 +286,21 @@ class AgentAssistSidebar {
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
     `;
     const micToggle = el.querySelector('.mic-toggle');
-    micToggle.addEventListener('click', () => { this.toggleMicrophone(); });
+    this.micHandler = () => this.toggleMicrophone();
+    micToggle.addEventListener('click', this.micHandler);
     
     const minimizeToggle = el.querySelector('.minimize-toggle');
-    minimizeToggle.addEventListener('click', () => { this.minimizeExtension(); });
+    console.log('[DEBUG] Minimize toggle found:', !!minimizeToggle);
+    if (minimizeToggle) {
+      this.minimizeHandler = () => {
+        console.log('[DEBUG] Minimize button clicked!');
+        this.forceHideExtension();
+      };
+      minimizeToggle.addEventListener('click', this.minimizeHandler);
+      console.log('[DEBUG] Minimize event handler attached');
+    } else {
+      console.error('[DEBUG] Minimize toggle not found in sidebar');
+    }
     
     document.body.appendChild(el);
     this.sidebar = el;
@@ -229,14 +353,137 @@ class AgentAssistSidebar {
     }
   }
 
+  rebindEventHandlers() {
+    if (!this.sidebar) return;
+    
+    console.log('[DRAG] Rebinding event handlers after drag...');
+    
+    // Rebind minimize button with improved binding
+    const minimizeToggle = this.sidebar.querySelector('.minimize-toggle');
+    console.log('[DRAG] Rebinding minimize toggle, found:', !!minimizeToggle);
+    if (minimizeToggle) {
+      // Clean up old event listeners completely
+      if (this.minimizeHandler) {
+        minimizeToggle.removeEventListener('click', this.minimizeHandler);
+      }
+      // Clone the button to remove all event listeners
+      const newMinimizeToggle = minimizeToggle.cloneNode(true);
+      minimizeToggle.parentNode.replaceChild(newMinimizeToggle, minimizeToggle);
+      
+      // Create new handler and bind it
+      this.minimizeHandler = (e) => {
+        console.log('[DEBUG] Minimize button clicked after rebind!');
+        e.stopPropagation();
+        e.preventDefault();
+        this.forceHideExtension();
+      };
+      newMinimizeToggle.addEventListener('click', this.minimizeHandler);
+      
+      // Ensure button is usable
+      newMinimizeToggle.style.pointerEvents = 'auto';
+      newMinimizeToggle.style.zIndex = '1000000';
+      newMinimizeToggle.style.position = 'relative';
+      newMinimizeToggle.style.cursor = 'pointer';
+      
+      console.log('[DRAG] Minimize button rebound with enhanced handlers');
+    } else {
+      console.error('[DRAG] Minimize toggle not found during rebind');
+    }
+    
+    // Rebind microphone button
+    const micToggle = this.sidebar.querySelector('.mic-toggle');
+    if (micToggle) {
+      // Clean up old event listeners completely
+      if (this.micHandler) {
+        micToggle.removeEventListener('click', this.micHandler);
+      }
+      // Clone the button to remove all event listeners
+      const newMicToggle = micToggle.cloneNode(true);
+      micToggle.parentNode.replaceChild(newMicToggle, micToggle);
+      
+      // Create new handler and bind it
+      this.micHandler = (e) => {
+        e.stopPropagation();
+        this.toggleMicrophone();
+      };
+      newMicToggle.addEventListener('click', this.micHandler);
+      
+      // Ensure button is usable
+      newMicToggle.style.pointerEvents = 'auto';
+      newMicToggle.style.zIndex = '1000000';
+      newMicToggle.style.position = 'relative';
+      
+      console.log('[DRAG] Microphone button rebound with enhanced handlers');
+    }
+    
+    // Rebind tab buttons
+    const tabButtons = this.sidebar.querySelectorAll('.agent-assist-tab');
+    tabButtons.forEach(btn => {
+      // Clone to remove all event listeners
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      // Create new handler and bind it
+      newBtn._tabHandler = () => this.switchTab(newBtn.dataset.tab);
+      newBtn.addEventListener('click', newBtn._tabHandler);
+    });
+    console.log('[DRAG] Tab buttons rebound');
+    
+    console.log('[DRAG] All event handlers successfully rebound');
+  }
+
+  forceHideExtension() {
+    console.log('[AgentAssist][FORCE_HIDE] Force hiding extension via minimize button');
+    this.hide();
+  }
+
   minimizeExtension() {
     console.log('[AgentAssist][MINIMIZE] Minimizing extension...');
+    console.log('[AgentAssist][MINIMIZE] Sidebar state before hide:', this.state.visible);
+    
+    // Force any pending transitions to complete
+    if (this.sidebar) {
+      this.sidebar.style.transition = 'none';
+    }
+    
+    // Save position before hiding if user positioned
+    let userPosition = null;
+    if (this.sidebar && this.sidebar.hasAttribute('data-user-positioned')) {
+      userPosition = {
+        left: this.sidebar.style.left,
+        top: this.sidebar.style.top,
+        position: 'fixed'
+      };
+      console.log('[AgentAssist][MINIMIZE] Saved user position:', userPosition);
+    }
     
     // Hide the main sidebar
     this.hide();
     
+    console.log('[AgentAssist][MINIMIZE] Sidebar state after hide:', this.state.visible);
+    
     // Show the existing toggle button (don't create a new one)
     this.ensureToggleButton();
+    
+    // Save user position for next show
+    if (userPosition) {
+      // Store position for next show
+      this._savedUserPosition = userPosition;
+    }
+    
+    console.log('[AgentAssist][MINIMIZE] Minimize complete');
+    
+    // Add a global test function for debugging
+    window.testMinimize = () => {
+      console.log('[DEBUG] Test minimize called');
+      this.minimizeExtension();
+    };
+    
+    // Add restore test function
+    window.testRestore = () => {
+      console.log('[DEBUG] Test restore called');
+      this.show();
+    };
   }
 
   createFloatingToggle() {
@@ -1475,8 +1722,12 @@ class AgentAssistSidebar {
     let startSidebarY = 0;
 
     const onDragStart = (e) => {
-        // Only drag from handle
+        // Only drag from handle - prevent dragging from buttons
         if (!e.target.closest('.agent-assist-drag-handle')) return;
+        if (e.target.closest('.minimize-toggle, .mic-toggle, .agent-assist-tab, button')) return;
+        
+        // Don't start drag if clicking on interactive elements
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
         
         e.preventDefault();
         e.stopPropagation();
@@ -1570,6 +1821,25 @@ class AgentAssistSidebar {
         
         console.log('[DRAG] Ended at:', finalPosition);
         
+        // Force buttons to be visible and clickable after drag
+        const minimizeToggle = this.sidebar.querySelector('.minimize-toggle');
+        const micToggle = this.sidebar.querySelector('.mic-toggle');
+        
+        if (minimizeToggle) {
+            minimizeToggle.style.pointerEvents = 'auto';
+            minimizeToggle.style.zIndex = '1000000';
+            minimizeToggle.style.position = 'relative';
+        }
+        
+        if (micToggle) {
+            micToggle.style.pointerEvents = 'auto';
+            micToggle.style.zIndex = '1000000';
+            micToggle.style.position = 'relative';
+        }
+        
+        // Ensure all event handlers still work after drag
+        this.rebindEventHandlers();
+        
         // Add a small delay to check if position gets overridden
         setTimeout(() => {
             const afterDelay = {
@@ -1583,6 +1853,12 @@ class AgentAssistSidebar {
                     before: finalPosition, 
                     after: afterDelay 
                 });
+            }
+            
+            // Re-apply button styles just to be sure
+            if (minimizeToggle) {
+                minimizeToggle.style.pointerEvents = 'auto';
+                minimizeToggle.style.zIndex = '1000000';
             }
         }, 100);
     };
@@ -1654,7 +1930,27 @@ class AgentAssistSidebar {
     this.moveUnderline();
   }
 
-  toggle() { this.state.visible ? this.hide() : this.show(); }
+  toggle() {
+    console.log('[AgentAssist][TOGGLE] Toggle called, current state:', this.state.visible);
+    console.log('[AgentAssist][TOGGLE] Sidebar element exists:', !!this.sidebar);
+    if (this.sidebar) {
+      console.log('[AgentAssist][TOGGLE] Sidebar classes:', this.sidebar.className);
+      console.log('[AgentAssist][TOGGLE] Sidebar transform:', this.sidebar.style.transform);
+      console.log('[AgentAssist][TOGGLE] Sidebar opacity:', this.sidebar.style.opacity);
+    }
+    
+    this.state.visible ? this.hide() : this.show();
+    
+    // Add a small delay to check final state
+    setTimeout(() => {
+      console.log('[AgentAssist][TOGGLE] After toggle - state:', this.state.visible);
+      if (this.sidebar) {
+        console.log('[AgentAssist][TOGGLE] After toggle - classes:', this.sidebar.className);
+        console.log('[AgentAssist][TOGGLE] After toggle - transform:', this.sidebar.style.transform);
+        console.log('[AgentAssist][TOGGLE] After toggle - opacity:', this.sidebar.style.opacity);
+      }
+    }, 100);
+  }
 
   resetPosition() {
     if (!this.sidebar) return;
@@ -1679,28 +1975,105 @@ class AgentAssistSidebar {
 
 show() {
     if (!this.sidebar) return;
+    console.log('[AgentAssist][SHOW] Showing sidebar');
+    
     this.state.visible = true;
     this.sidebar.classList.add('is-visible');
     
+    // Check if we have a saved position from previous minimization
+    if (this._savedUserPosition) {
+        console.log('[AgentAssist][SHOW] Restoring saved position:', this._savedUserPosition);
+        this.sidebar.style.position = this._savedUserPosition.position || 'fixed';
+        this.sidebar.style.left = this._savedUserPosition.left;
+        this.sidebar.style.top = this._savedUserPosition.top;
+        this.sidebar.style.right = 'unset';
+        this.sidebar.style.transform = 'none';
+        
+        // Mark as user-positioned
+        this.sidebar.setAttribute('data-user-positioned', 'true');
+        
+        // After restoring, clear saved position
+        this._savedUserPosition = null;
+    }
     // Check if user has manually positioned the sidebar
-    const isUserPositioned = this.sidebar.hasAttribute('data-user-positioned');
-    
-    if (!isUserPositioned) {
-        // Use default positioning
+    else if (this.sidebar.hasAttribute('data-user-positioned')) {
+        console.log('[AgentAssist][SHOW] Keeping user-positioned location');
+        // Clear any hiding transform for user-positioned sidebars
+        this.sidebar.style.transform = 'none';
+    } 
+    else {
+        // Use default positioning - allow extension to overlap the toggle button
+        console.log('[AgentAssist][SHOW] Using default positioning');
         this.sidebar.style.position = 'fixed';
-        this.sidebar.style.right = '1.25rem';
+        this.sidebar.style.right = '1.25rem'; // Returned to original position
         this.sidebar.style.top = '1.25rem';
         this.sidebar.style.left = 'unset';
-        this.sidebar.style.transform = '';
+        this.sidebar.style.transform = 'translateX(0)'; // Explicitly show
         this.reposition();
         this.applyLayoutPush();
     }
-    // If user-positioned, keep current position and don't interfere
+    
+    // Make sure button event handlers are working
+    this.rebindEventHandlers();
+    
+    // Ensure toggle button stays visible even when sidebar is showing
+    if (this.toggleButton) {
+        this.toggleButton.style.display = 'flex';
+        this.toggleButton.style.opacity = '1';
+    }
     
     this.updateToggleVisual();
     this.moveUnderline();
-}  hide() { if (!this.sidebar) return; this.state.visible = false; this.sidebar.classList.remove('is-visible'); this.removeLayoutPush(); this.updateToggleVisual(); }
-  updateToggleVisual() { if (!this.toggleButton) return; this.toggleButton.classList.toggle('active', this.state.visible); this.toggleButton.setAttribute('aria-pressed', this.state.visible?'true':'false'); }
+    
+    // Ensure sidebar is visible
+    this.sidebar.style.opacity = '1';
+    this.sidebar.style.pointerEvents = 'auto';
+    
+    console.log('[AgentAssist][SHOW] Sidebar shown and visible');
+}  
+
+hide() { 
+    if (!this.sidebar) return; 
+    console.log('[AgentAssist][HIDE] Hiding sidebar');
+    
+    this.state.visible = false; 
+    this.sidebar.classList.remove('is-visible'); 
+    
+    // Force hide with transform for user-positioned sidebars
+    if (this.sidebar.hasAttribute('data-user-positioned')) {
+        this.sidebar.style.transform = 'translateX(calc(100% + 2rem))';
+    }
+    
+    // Ensure it's actually hidden
+    this.sidebar.style.opacity = '0';
+    this.sidebar.style.pointerEvents = 'none';
+    
+    this.removeLayoutPush();
+    
+    // Ensure toggle button is visible
+    this.ensureToggleButton();
+    if (this.toggleButton) {
+        this.toggleButton.style.display = 'flex';
+        this.toggleButton.style.opacity = '1';
+        this.toggleButton.style.zIndex = '999997'; // Maintain z-index
+    }
+    
+    this.updateToggleVisual(); 
+    
+    console.log('[AgentAssist][HIDE] Sidebar hidden');
+}
+  updateToggleVisual() { 
+    if (!this.toggleButton) return; 
+    
+    // Update button visual state
+    this.toggleButton.classList.toggle('active', this.state.visible); 
+    this.toggleButton.setAttribute('aria-pressed', this.state.visible ? 'true' : 'false');
+    
+    // Always keep button visible
+    this.toggleButton.style.display = 'flex';
+    this.toggleButton.style.opacity = '1';
+    this.toggleButton.style.zIndex = '999998';
+  }
 
   detectHeaderHeight() { return 0; } // Force flush to top
   reposition() {
@@ -1891,6 +2264,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!agentAssist) return;
   if (message.type === 'toggleSidebar' || message.type === 'agentAssist.toggle') agentAssist.toggle();
   if (message.type === 'agentAssist.openTab' && message.tab) agentAssist.switchTab(message.tab);
+  if (message.type === 'ensureToggleButton') {
+    console.log('[AgentAssist] Background script requesting toggle button check');
+    agentAssist.ensureToggleButton();
+    // Don't auto-show the extension unless explicitly requested
+    if (message.autoShow === true) {
+      agentAssist.show();
+    }
+    sendResponse({ success: true });
+  }
   if (message.type === 'getMeetingInfo') {
     sendResponse({ participants: agentAssist.getParticipants().length, duration: null, isInMeeting: true });
   }
