@@ -5,7 +5,7 @@ class AgentAssistSidebar {
   constructor() {
     this.state = {
       visible: false,
-      currentTab: 'assist', // Changed from 'score' to 'assist'
+      currentTab: 'script', // Changed from 'score' to 'assist'
       suggestions: [],
       transcripts: [],
       scores: [],
@@ -167,7 +167,7 @@ class AgentAssistSidebar {
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
-          ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='assist'}" tabindex="${t==='assist'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+          ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='script'}" tabindex="${t==='script'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
         </div>
       </div>
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
@@ -300,6 +300,25 @@ class AgentAssistSidebar {
         try {
           const data = JSON.parse(evt.data);
           console.log('[AgentAssist][WS][RESULTS] Object:', data); // per user: log objects to console
+          if (data.action === 'transcript' && data.data) {
+            this.state.transcripts.push({
+              speaker: data.data.speaker,
+              text:    data.data.transcript,
+              timestamp: data.data.timestamp
+            });
+            if (this.state.currentTab === 'script') {
+              this.renderCurrentTab();
+            }
+          }
+          if (data.action === 'analysis' && data.data) {
+            console.log(data.analysis_result)
+          }
+          
+          
+
+
+
+
         } catch(e){ console.warn('[AgentAssist][WS][RESULTS] Non-JSON message', evt.data); }
       };
       this.wsResults.onerror = (e) => { console.error('[AgentAssist][WS][RESULTS] Error', e); };
@@ -1612,15 +1631,21 @@ class AgentAssistSidebar {
           return `<div class="aa-suggestion${barClass}" data-idx="${i}">${this.escapeHTML(item.text)}</div>`;
         }).join('') + '</div>';
       case 'script':
-        if (!s.transcripts.length) return this.emptyState('📝','Transcript','Live transcript will appear here.');
-        const aggregated = s.transcripts.map(t=>t.text).join(' ');
-        const entries = s.transcripts.slice().reverse().map(t => {
-          // Determine if it's user's own transcript or someone else's
-          const isUser = t.speaker === 'You' || t.speaker === 'User' || t.speaker === 'Self';
-          const alignmentClass = isUser ? 'user' : 'other';
-          return `<div class="aa-transcript-entry ${alignmentClass}"><div class="aa-transcript-speaker">${this.escapeHTML(t.speaker)}</div><div class="aa-transcript-text">${this.escapeHTML(t.text)}</div><div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div></div>`;
-        }).join('');
-        return `<div class="aa-script-block">${this.escapeHTML(aggregated)}</div>` + entries;
+         if (!s.transcripts.length) 
+            return this.emptyState('📝', 'Transcript', 'Live transcript will appear here.');
+          
+          //const aggregated = s.transcripts.map(t => t.text).join(' ');
+          const entries = s.transcripts.slice().reverse().map(t => {
+            // Determine if it's user's own transcript or someone else's
+            const isUser = t.speaker != 'Agent';
+            const alignmentClass = isUser ? 'user' : 'agent';
+            return `<div class="aa-transcript-entry ${alignmentClass}">
+                      <div class="aa-transcript-speaker">${this.escapeHTML(t.speaker)}</div>
+                      <div class="aa-transcript-text">${this.escapeHTML(t.text)}</div>
+                      <div class="aa-transcript-time">${new Date(t.timestamp).toLocaleTimeString()}</div>
+                    </div>`;
+          }).join('');
+          return entries;
       case 'score':
         if (!s.scores.length) {
           // Provide a default example card similar to screenshot
@@ -1714,7 +1739,7 @@ show() {
     if (this.headerHeight !== 0 || this.sidebar.style.top !== '0px') {
       this.headerHeight = 0;
       this.sidebar.style.top = '0px';
-      this.sidebar.style.height = '65vh';
+      this.sidebar.style.height = '100vh';
     }
   }
 
