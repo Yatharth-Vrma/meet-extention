@@ -5,7 +5,7 @@ class AgentAssistSidebar {
   constructor() {
     this.state = {
       visible: false,
-      currentTab: 'score',
+      currentTab: 'assist', // Changed from 'score' to 'assist'
       suggestions: [],
       transcripts: [],
       scores: [],
@@ -73,18 +73,45 @@ class AgentAssistSidebar {
   init() {
     this.ensureToggleButton();
     this.createSidebar();
+    // Check font loading
+    this.checkFontLoading();
     // Removed connectRealtimeWebSocket() for local development
     this.observeEnvironment();
     this.scheduleContextUpdates();
     if (window.location.hostname === 'meet.google.com') {
       setTimeout(() => this.show(), 1200);
     }
-  // Connect results websocket immediately
-  this.connectResultsWebSocket();
+    // Connect results websocket immediately
+    this.connectResultsWebSocket();
+  }  generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   }
 
-  generateSessionId() {
-    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  // Check if SF Pro Text is loaded
+  checkFontLoading() {
+    try {
+      // Use the Font Loading API if available
+      if ('fonts' in document) {
+        document.fonts.ready.then(() => {
+          const sfProLoaded = document.fonts.check('12px "SF Pro Text"');
+          console.log('[AgentAssist][FONT] SF Pro Text available:', sfProLoaded);
+          
+          if (!sfProLoaded) {
+            console.log('[AgentAssist][FONT] SF Pro Text not found, using system fallbacks');
+            // Update CSS custom property to skip SF Pro Text
+            document.documentElement.style.setProperty(
+              '--aa-font-family', 
+              '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+            );
+          }
+        });
+      } else {
+        // Fallback for older browsers
+        console.log('[AgentAssist][FONT] Font Loading API not supported, using fallbacks');
+      }
+    } catch (error) {
+      console.warn('[AgentAssist][FONT] Font loading check failed:', error);
+    }
   }
 
   ensureToggleButton() {
@@ -140,7 +167,7 @@ class AgentAssistSidebar {
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
-          ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='score'}" tabindex="${t==='score'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+          ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='assist'}" tabindex="${t==='assist'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
         </div>
       </div>
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
@@ -208,44 +235,19 @@ class AgentAssistSidebar {
     // Hide the main sidebar
     this.hide();
     
-    // Create floating toggle button
-    this.createFloatingToggle();
+    // Show the existing toggle button (don't create a new one)
+    this.ensureToggleButton();
   }
 
   createFloatingToggle() {
-    // Remove existing floating button if any
-    if (this.floatingButton && document.body.contains(this.floatingButton)) {
-      document.body.removeChild(this.floatingButton);
-    }
-    
-    const floatingBtn = document.createElement('button');
-    floatingBtn.className = 'agent-assist-floating-toggle';
-    floatingBtn.type = 'button';
-    floatingBtn.setAttribute('aria-label', 'Restore Agent Assist');
-    floatingBtn.setAttribute('title', 'Restore Agent Assist');
-    floatingBtn.style.backgroundImage = `url('${chrome.runtime.getURL('icons/logo.png')}')`;
-    floatingBtn.innerHTML = `
-      <div class="floating-logo-fallback"></div>
-    `;
-    
-    floatingBtn.addEventListener('click', () => {
-      this.restoreExtension();
-    });
-    
-    document.body.appendChild(floatingBtn);
-    this.floatingButton = floatingBtn;
+    // This method is no longer needed since we reuse the main toggle button
+    console.log('[AgentAssist][DEPRECATED] createFloatingToggle - using main toggle instead');
   }
 
   restoreExtension() {
     console.log('[AgentAssist][RESTORE] Restoring extension...');
     
-    // Remove floating button
-    if (this.floatingButton && document.body.contains(this.floatingButton)) {
-      document.body.removeChild(this.floatingButton);
-      this.floatingButton = null;
-    }
-    
-    // Show the main sidebar
+    // Show the main sidebar (toggle button will be hidden automatically)
     this.show();
   }
 
@@ -1464,71 +1466,139 @@ class AgentAssistSidebar {
   setupDraggable() {
     if (!this.sidebar) return;
     const dragHandle = this.sidebar.querySelector('.agent-assist-drag-handle');
+    if (!dragHandle) return;
+    
     let isDragging = false;
-    let currentX;
-    let currentY;
-    let initialX;
-    let initialY;
-    let xOffset = 0;
-    let yOffset = 0;
+    let startMouseX = 0;
+    let startMouseY = 0;
+    let startSidebarX = 0;
+    let startSidebarY = 0;
 
-    const dragStart = (e) => {
-        // Only allow dragging from the drag handle, not from buttons
+    const onDragStart = (e) => {
+        // Only drag from handle
         if (!e.target.closest('.agent-assist-drag-handle')) return;
         
-        if (e.type === "touchstart") {
-            initialX = e.touches[0].clientX - xOffset;
-            initialY = e.touches[0].clientY - yOffset;
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Get starting positions
+        const rect = this.sidebar.getBoundingClientRect();
+        startSidebarX = rect.left;
+        startSidebarY = rect.top;
+        
+        if (e.type === 'touchstart') {
+            startMouseX = e.touches[0].clientX;
+            startMouseY = e.touches[0].clientY;
         } else {
-            initialX = e.clientX - xOffset;
-            initialY = e.clientY - yOffset;
+            startMouseX = e.clientX;
+            startMouseY = e.clientY;
         }
         
         isDragging = true;
+        
+        // Prepare for dragging
         this.sidebar.classList.add('dragging');
+        this.sidebar.style.position = 'fixed';
+        this.sidebar.style.zIndex = '999999';
+        this.sidebar.style.left = startSidebarX + 'px';
+        this.sidebar.style.top = startSidebarY + 'px';
+        this.sidebar.style.right = 'unset';
+        this.sidebar.style.transform = 'none';
+        
+        // Disable any layout interference
+        this.removeLayoutPush();
+        
+        console.log('[DRAG] Started at:', { startSidebarX, startSidebarY });
     };
 
-    const dragEnd = () => {
-        isDragging = false;
-        this.sidebar.classList.remove('dragging');
-    };
-
-    const drag = (e) => {
+    const onDragMove = (e) => {
         if (!isDragging) return;
         
         e.preventDefault();
+        e.stopPropagation();
         
-        if (e.type === "touchmove") {
-            currentX = e.touches[0].clientX - initialX;
-            currentY = e.touches[0].clientY - initialY;
+        let currentMouseX, currentMouseY;
+        if (e.type === 'touchmove') {
+            currentMouseX = e.touches[0].clientX;
+            currentMouseY = e.touches[0].clientY;
         } else {
-            currentX = e.clientX - initialX;
-            currentY = e.clientY - initialY;
+            currentMouseX = e.clientX;
+            currentMouseY = e.clientY;
         }
-
-        xOffset = currentX;
-        yOffset = currentY;
         
-        // Constrain to window bounds
-        const rect = this.sidebar.getBoundingClientRect();
-        const maxX = window.innerWidth - rect.width;
-        const maxY = window.innerHeight - rect.height;
+        // Calculate movement delta
+        const deltaX = currentMouseX - startMouseX;
+        const deltaY = currentMouseY - startMouseY;
         
-        xOffset = Math.min(Math.max(0, xOffset), maxX);
-        yOffset = Math.min(Math.max(0, yOffset), maxY);
+        // Calculate new position
+        let newX = startSidebarX + deltaX;
+        let newY = startSidebarY + deltaY;
         
-        this.sidebar.style.transform = `translate3d(${xOffset}px, ${yOffset}px, 0)`;
-        this.sidebar.style.right = 'auto';
-        this.removeLayoutPush(); // Remove layout pushing when dragged
+        // Get sidebar dimensions for boundary checking
+        const sidebarRect = this.sidebar.getBoundingClientRect();
+        const sidebarWidth = sidebarRect.width;
+        const sidebarHeight = sidebarRect.height;
+        
+        // Apply viewport boundaries with padding
+        const padding = 10;
+        const minX = padding;
+        const minY = padding;
+        const maxX = window.innerWidth - sidebarWidth - padding;
+        const maxY = window.innerHeight - sidebarHeight - padding;
+        
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+        
+        // Apply new position
+        this.sidebar.style.left = newX + 'px';
+        this.sidebar.style.top = newY + 'px';
     };
 
-    // Add event listeners to the drag handle
-    dragHandle.addEventListener('touchstart', dragStart, false);
-    dragHandle.addEventListener('touchend', dragEnd, false);
-    dragHandle.addEventListener('touchmove', drag, false);
-    dragHandle.addEventListener('mousedown', dragStart, false);
-    document.addEventListener('mousemove', drag, false);
-    document.addEventListener('mouseup', dragEnd, false);
+    const onDragEnd = (e) => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        this.sidebar.classList.remove('dragging');
+        
+        // Mark as user-positioned
+        this.sidebar.setAttribute('data-user-positioned', 'true');
+        
+        const finalPosition = {
+            left: this.sidebar.style.left,
+            top: this.sidebar.style.top
+        };
+        
+        console.log('[DRAG] Ended at:', finalPosition);
+        
+        // Add a small delay to check if position gets overridden
+        setTimeout(() => {
+            const afterDelay = {
+                left: this.sidebar.style.left,
+                top: this.sidebar.style.top
+            };
+            console.log('[DRAG] Position after 100ms:', afterDelay);
+            
+            if (finalPosition.top !== afterDelay.top || finalPosition.left !== afterDelay.left) {
+                console.error('[DRAG] Position was overridden!', { 
+                    before: finalPosition, 
+                    after: afterDelay 
+                });
+            }
+        }, 100);
+    };
+
+    // Event listeners
+    dragHandle.addEventListener('mousedown', onDragStart);
+    dragHandle.addEventListener('touchstart', onDragStart, { passive: false });
+    
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('touchmove', onDragMove, { passive: false });
+    
+    document.addEventListener('mouseup', onDragEnd);
+    document.addEventListener('touchend', onDragEnd);
+    
+    // Prevent context menu on drag handle
+    dragHandle.addEventListener('contextmenu', e => e.preventDefault());
 }
 
   getTabHTML(tab) {
@@ -1585,16 +1655,47 @@ class AgentAssistSidebar {
   }
 
   toggle() { this.state.visible ? this.hide() : this.show(); }
+
+  resetPosition() {
+    if (!this.sidebar) return;
+    
+    console.log('[POSITION] Resetting sidebar to default position');
+    
+    // Clear user positioning
+    this.sidebar.removeAttribute('data-user-positioned');
+    
+    // Reset to default CSS positioning
+    this.sidebar.style.position = 'fixed';
+    this.sidebar.style.right = '1.25rem';
+    this.sidebar.style.top = '1.25rem';
+    this.sidebar.style.left = 'unset';
+    this.sidebar.style.transform = '';
+    
+    // Re-enable layout push if visible
+    if (this.state.visible) {
+      this.applyLayoutPush();
+    }
+  }
+
 show() {
     if (!this.sidebar) return;
     this.state.visible = true;
     this.sidebar.classList.add('is-visible');
     
-    // Only apply layout push if not dragged
-    if (!this.sidebar.style.transform) {
+    // Check if user has manually positioned the sidebar
+    const isUserPositioned = this.sidebar.hasAttribute('data-user-positioned');
+    
+    if (!isUserPositioned) {
+        // Use default positioning
+        this.sidebar.style.position = 'fixed';
+        this.sidebar.style.right = '1.25rem';
+        this.sidebar.style.top = '1.25rem';
+        this.sidebar.style.left = 'unset';
+        this.sidebar.style.transform = '';
         this.reposition();
         this.applyLayoutPush();
     }
+    // If user-positioned, keep current position and don't interfere
     
     this.updateToggleVisual();
     this.moveUnderline();
@@ -1604,10 +1705,16 @@ show() {
   detectHeaderHeight() { return 0; } // Force flush to top
   reposition() {
     if (!this.sidebar) return;
+    
+    // Don't reposition if user has manually positioned the sidebar
+    if (this.sidebar.hasAttribute('data-user-positioned')) {
+      return;
+    }
+    
     if (this.headerHeight !== 0 || this.sidebar.style.top !== '0px') {
       this.headerHeight = 0;
       this.sidebar.style.top = '0px';
-      this.sidebar.style.height = '100vh';
+      this.sidebar.style.height = '65vh';
     }
   }
 

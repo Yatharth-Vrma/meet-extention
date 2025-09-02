@@ -23,8 +23,8 @@
   --aa-shadow-primary: 0 4px 12px rgba(0, 0, 0, 0.1);
   --aa-shadow-light: 0 2px 8px rgba(0, 0, 0, 0.08);
   
-  /* Typography */
-  --aa-font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  /* Typography - Updated with proper fallbacks */
+  --aa-font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   --aa-font-size-xs: 0.75rem;   /* 12px */
   --aa-font-size-sm: 0.875rem;  /* 14px */
   --aa-font-size-base: 1rem;    /* 16px */
@@ -49,6 +49,29 @@
   --aa-transition-slow: 0.3s ease-in-out;
 }
 
+/* Font loading and fallback system */
+@font-face {
+  font-family: 'SF Pro Text';
+  src: local('SF Pro Text'), 
+       local('SFProText-Regular'),
+       local('SF Pro Display'),
+       local('SFProDisplay-Regular');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'SF Pro Text';
+  src: local('SF Pro Text Medium'), 
+       local('SFProText-Medium'),
+       local('SF Pro Display Medium'),
+       local('SFProDisplay-Medium');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Reset and base styles for extension elements */
 .agent-assist-sidebar *,
 .agent-assist-sidebar *::before,
@@ -58,11 +81,18 @@
   padding: 0;
 }
 
-/* Toggle Button - Positioned to avoid conflicts */
+/* Force font inheritance on all extension elements */
+.agent-assist-sidebar,
+.agent-assist-sidebar * {
+  font-family: var(--aa-font-family) !important;
+}
+
+/* Toggle Button - Positioned to avoid conflicts - SINGLE BUTTON */
 .agent-assist-toggle {
   position: fixed;
-  top: 5rem;
-  right: 1.25rem;
+  top: 50%;
+  right: 0.625rem;  /* 10px from right edge */
+  transform: translateY(-50%);  /* Center vertically */
   z-index: 999998;
   width: 3rem;
   height: 3rem;
@@ -94,46 +124,6 @@
   height: 1.375rem;
 }
 
-/* Floating Toggle Button - Minimized State */
-.agent-assist-floating-toggle {
-  position: fixed;
-  top: 5rem;
-  right: 1.25rem;
-  z-index: 999998;
-  width: 3rem;
-  height: 3rem;
-  background: var(--aa-bg-primary);
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  border: 2px solid var(--aa-primary);
-  border-radius: 50%;
-  cursor: pointer;
-  box-shadow: var(--aa-shadow-primary);
-  transition: all var(--aa-transition-base);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0;
-}
-
-.agent-assist-floating-toggle:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 16px rgba(86, 90, 221, 0.3);
-}
-
-.agent-assist-floating-toggle:focus {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: 2px;
-}
-
-.floating-logo-fallback {
-  width: 1.5rem;
-  height: 1.5rem;
-  background: conic-gradient(from 0deg, var(--aa-primary) 0deg, transparent 60deg, var(--aa-primary) 120deg, transparent 180deg, var(--aa-primary) 240deg, transparent 300deg);
-  border-radius: 50%;
-}
-
 /* Main Sidebar Container - Following Figma Design */
 .agent-assist-sidebar {
   position: fixed;
@@ -150,13 +140,24 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transform: translateX(100%);
+  transform: translateX(calc(100% + 2rem));  /* Hide completely with extra margin */
   transition: transform var(--aa-transition-slow);
   isolation: isolate; /* Prevents CSS conflicts */
 }
 
+/* Disable transitions for user-positioned (dragged) sidebars */
+.agent-assist-sidebar[data-user-positioned] {
+  transition: none !important;
+  transform: none !important;
+}
+
 .agent-assist-sidebar.visible {
   transform: translateX(0);
+}
+
+/* Override visible state for user-positioned sidebars */
+.agent-assist-sidebar[data-user-positioned].visible {
+  transform: none !important;
 }
 
 .agent-assist-sidebar.is-visible {
@@ -239,7 +240,7 @@
   /* Meeting name */
   width: 11.625rem;  /* 186px */
   height: 1.125rem;  /* 18px */
-  font-family: 'SF Pro Text';
+  font-family: var(--aa-font-family) !important;
   font-style: normal;
   font-weight: 500;
   font-size: 0.875rem;  /* 14px */
@@ -288,7 +289,7 @@
   /* Meeting duration */
   width: 2.1875rem;  /* 35px */
   height: 1rem;      /* 16px */
-  font-family: 'SF Pro Text';
+  font-family: var(--aa-font-family) !important;
   font-style: normal;
   font-weight: 400;
   font-size: 0.75rem;  /* 12px */
@@ -451,8 +452,8 @@
 
 .agent-assist-tab:focus,
 .agent-assist-tab:focus-visible {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: -2px;
+  outline: none; /* Remove blue outline */
+  color: var(--aa-primary); /* Show active state with color only */
 }
 
 /* Status Indicator - positioned in the tabs area */
@@ -962,6 +963,7 @@
 
 .aa-chat-input-row input:focus {
   border-color: var(--aa-primary);
+  outline: none; /* Remove blue outline */
 }
 
 .aa-chat-input-row button {
@@ -988,8 +990,7 @@
 }
 
 .aa-chat-input-row button:focus-visible {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: 1px;
+  outline: none; /* Remove blue outline */
 }
 
 /* Additional message and item components for broader compatibility */
@@ -1140,14 +1141,14 @@
 
 /* Accessibility Enhancements */
 .agent-assist-sidebar:focus-within {
-  outline: 2px solid var(--aa-primary);
-  outline-offset: -2px;
+  outline: none; /* Remove blue outline */
 }
 
 /* Draggable State */
 .agent-assist-sidebar.dragging {
-  transition: none;
+  transition: none !important;
   user-select: none;
+  cursor: grabbing;
 }
 
 /* Hide scrollbar for Firefox */
