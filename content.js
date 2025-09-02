@@ -49,40 +49,12 @@ class AgentAssistSidebar {
       system: '0' // Set to '1' if you want system audio too
     };
 
-    // Remote participant transcription configuration (user must configure endpoint/apiKey)
-    this.remoteTranscription = {
-      enabled: true,
-      endpoint: null, // Azure STT endpoint: 'https://eastus.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1'
-      apiKey: null,   // Azure Speech Service API key
-      region: null,   // Azure region (e.g., 'eastus')
-      sampleRate: 16000,
-      sending: false,
-      vadThreshold: 0.013,
-      minSpeechMs: 300,
-      maxSegmentMs: 8000,
-      silenceMs: 500,
-      warned: false,
-      // Azure STT specific settings
-      language: 'en-US',
-      format: 'detailed', // 'simple' or 'detailed'
-      profanityFilter: 'None',
-      enableWordLevelTimestamps: true
-    };
+  // Fixed WebSocket endpoints (as provided) for audio streaming & results
+  // NOTE: Per user request, query string kept exactly as supplied (including spaces)
+  this.WEBSOCKET_RESULTS_URL = "wss://devreal.darwix.ai/ws/live-results?user_id=rajat.kumawat@cur8.in&manager_id=4248&company_id=31&team_id=23&full_name=Rajat kumawat&region=east";
+  this.WEBSOCKET_AUDIO_URL   = "wss://devreal.darwix.ai/ws/audio-stream?user_id=rajat.kumawat@cur8.in&manager_id=4248&company_id=31&team_id=23&full_name=Rajat kumawat&region=east";
 
-    // Attempt to load persisted endpoint/apiKey
-    try {
-      chrome?.storage?.sync?.get?.(['azureSttRegion','azureSttApiKey'], (cfg)=>{
-        if (cfg?.azureSttRegion) {
-          this.remoteTranscription.region = cfg.azureSttRegion;
-          this.remoteTranscription.endpoint = `https://${cfg.azureSttRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`;
-        }
-        if (cfg?.azureSttApiKey) this.remoteTranscription.apiKey = cfg.azureSttApiKey;
-        if (this.remoteTranscription.endpoint && this.remoteTranscription.apiKey) {
-          console.log('[AgentAssist][AZURE] Loaded Azure STT configuration from storage');
-          console.log('[AgentAssist][AZURE] Endpoint:', this.remoteTranscription.endpoint);
-        }
-      });
-    } catch(e) { /* storage not available in this context */ }
+    // Removed Azure STT configuration - using WebSocket audio streaming only
     
     this.websocket = null;
     this.mediaRecorder = null;
@@ -91,6 +63,7 @@ class AgentAssistSidebar {
     this.lastHeaderNonZeroHeight = 0; // cache to prevent flicker
     this.contextInterval = null;
     this.underlineEl = null;
+    this.floatingButton = null;
     this.layoutSelectors = [
       '.R1Qczc', '.crqnQb', '.T4LgNb', '[data-allocation-index]', 'main'
     ];
@@ -106,6 +79,8 @@ class AgentAssistSidebar {
     if (window.location.hostname === 'meet.google.com') {
       setTimeout(() => this.show(), 1200);
     }
+  // Connect results websocket immediately
+  this.connectResultsWebSocket();
   }
 
   generateSessionId() {
@@ -132,61 +107,241 @@ class AgentAssistSidebar {
     el.setAttribute('role', 'complementary');
     el.setAttribute('aria-label', 'Agent Assist');
     el.innerHTML = `
+      <div class="agent-assist-drag-handle"></div>
       <header class="agent-assist-header">
-        <span class="agent-assist-brand">Sales Assistant</span>
-        <button class="mic-toggle" aria-label="Toggle Microphone" title="Toggle Microphone">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-            <line x1="8" y1="23" x2="16" y2="23"/>
-          </svg>
-        </button>
-        <button class="transparency-toggle" aria-label="Toggle Transparency" title="Toggle Transparency">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 3v18M3 12h18"/>
-          </svg>
-        </button>
+        <div class="agent-assist-header__logo" style="background-image: url('${chrome.runtime.getURL('icons/logo.png')}')"></div>
+        <div class="agent-assist-header__info">
+          <div class="agent-assist-brand">Team Standup</div>
+          <div class="agent-assist-header__status">
+            <div class="agent-assist-header__status-dot"></div>
+            <span class="agent-assist-header__status-time">12:34</span>
+          </div>
+        </div>
+        <div class="agent-assist-header__actions">
+          <button class="minimize-toggle" aria-label="Minimize Extension" title="Minimize Extension">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.67">
+              <line x1="4.17" y1="10" x2="15.83" y2="10"/>
+            </svg>
+          </button>
+          <button class="mic-toggle" aria-label="Toggle Microphone" title="Toggle Microphone">
+            <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <svg class="stop-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.67" style="display: none;">
+              <rect x="2.5" y="2.5" width="15" height="15" rx="0" ry="0"/>
+              <line x1="8.33" y1="7.5" x2="8.33" y2="12.5"/>
+              <line x1="11.67" y1="7.5" x2="11.67" y2="12.5"/>
+            </svg>
+          </button>
+        </div>
       </header>
       <div class="agent-assist-tabs">
         <div class="agent-assist-tablist" role="tablist" aria-label="Agent Assist Tabs">
           ${['assist','script','score','history','coach'].map(t=>`<button role="tab" aria-selected="${t==='score'}" tabindex="${t==='score'?0:-1}" class="agent-assist-tab" data-tab="${t}" id="aa-tab-${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
         </div>
-        <span class="aa-status-dot live" title="Live"></span>
-        <div class="agent-assist-tab-underline"></div>
       </div>
       <div class="agent-assist-content" id="aa-panel" role="tabpanel" aria-labelledby="aa-tab-score"></div>
     `;
     const micToggle = el.querySelector('.mic-toggle');
     micToggle.addEventListener('click', () => { this.toggleMicrophone(); });
+    
+    const minimizeToggle = el.querySelector('.minimize-toggle');
+    minimizeToggle.addEventListener('click', () => { this.minimizeExtension(); });
+    
     document.body.appendChild(el);
     this.sidebar = el;
     this.underlineEl = el.querySelector('.agent-assist-tab-underline');
     this.addTabListeners();
     this.setupDraggable();
-    this.setupTransparencyToggle();
     this.renderCurrentTab();
     this.reposition();
   }
 
   toggleMicrophone() {
     const micButton = this.sidebar.querySelector('.mic-toggle');
+    const micIcon = micButton.querySelector('.mic-icon');
+    const stopIcon = micButton.querySelector('.stop-icon');
     const isActive = micButton.classList.contains('active');
     
     console.log('[AgentAssist][MIC] Button state - isActive:', isActive, 'isStreaming:', this.isStreaming);
     
     if (!isActive) {
       console.log('[AgentAssist][MIC] Starting continuous transcription...');
+      // Ensure audio websocket is connected before streaming
+      this.connectAudioWebSocket();
       this.startLocalStreaming();
-      micButton.style.color = '#28C397';
+      
+      // Change button to stop state
       micButton.classList.add('active');
-      micButton.title = 'Transcription Active (Click to pause)';
+      micButton.style.background = '#FDE9E9';
+      micButton.style.color = '#EB1F26';
+      micButton.title = 'Stop Transcription';
+      micButton.setAttribute('aria-label', 'Stop Transcription');
+      
+      // Switch icons
+      micIcon.style.display = 'none';
+      stopIcon.style.display = 'block';
+      
     } else {
-      console.log('[AgentAssist][MIC] Pausing transcription...');
+      console.log('[AgentAssist][MIC] Stopping transcription...');
       this.pauseLocalStreaming();
-      micButton.style.color = '#6B6D72';
+      
+      // Change button back to mic state
       micButton.classList.remove('active');
+      micButton.style.background = 'var(--aa-accent-red)';
+      micButton.style.color = '#EB1F26';
       micButton.title = 'Start Transcription';
+      micButton.setAttribute('aria-label', 'Toggle Microphone');
+      
+      // Switch icons back
+      micIcon.style.display = 'block';
+      stopIcon.style.display = 'none';
+    }
+  }
+
+  minimizeExtension() {
+    console.log('[AgentAssist][MINIMIZE] Minimizing extension...');
+    
+    // Hide the main sidebar
+    this.hide();
+    
+    // Create floating toggle button
+    this.createFloatingToggle();
+  }
+
+  createFloatingToggle() {
+    // Remove existing floating button if any
+    if (this.floatingButton && document.body.contains(this.floatingButton)) {
+      document.body.removeChild(this.floatingButton);
+    }
+    
+    const floatingBtn = document.createElement('button');
+    floatingBtn.className = 'agent-assist-floating-toggle';
+    floatingBtn.type = 'button';
+    floatingBtn.setAttribute('aria-label', 'Restore Agent Assist');
+    floatingBtn.setAttribute('title', 'Restore Agent Assist');
+    floatingBtn.style.backgroundImage = `url('${chrome.runtime.getURL('icons/logo.png')}')`;
+    floatingBtn.innerHTML = `
+      <div class="floating-logo-fallback"></div>
+    `;
+    
+    floatingBtn.addEventListener('click', () => {
+      this.restoreExtension();
+    });
+    
+    document.body.appendChild(floatingBtn);
+    this.floatingButton = floatingBtn;
+  }
+
+  restoreExtension() {
+    console.log('[AgentAssist][RESTORE] Restoring extension...');
+    
+    // Remove floating button
+    if (this.floatingButton && document.body.contains(this.floatingButton)) {
+      document.body.removeChild(this.floatingButton);
+      this.floatingButton = null;
+    }
+    
+    // Show the main sidebar
+    this.show();
+  }
+
+  stopExtension() {
+    console.log('[AgentAssist][STOP] Stopping extension...');
+    
+    // Stop microphone streaming
+    this.pauseLocalStreaming();
+    
+    // Close websocket connections
+    if (this.wsResults) {
+      this.wsResults.close();
+      this.wsResults = null;
+    }
+    if (this.wsAudio) {
+      this.wsAudio.close();
+      this.wsAudio = null;
+    }
+    
+    // Hide sidebar
+    this.hide();
+    
+    // Clean up DOM elements
+    if (this.sidebar && document.body.contains(this.sidebar)) {
+      document.body.removeChild(this.sidebar);
+      this.sidebar = null;
+    }
+    if (this.toggleButton && document.body.contains(this.toggleButton)) {
+      document.body.removeChild(this.toggleButton);
+      this.toggleButton = null;
+    }
+    if (this.floatingButton && document.body.contains(this.floatingButton)) {
+      document.body.removeChild(this.floatingButton);
+      this.floatingButton = null;
+    }
+    
+    console.log('[AgentAssist][STOP] Extension stopped successfully');
+  }
+
+  // Connect to live results websocket (receives JSON objects)
+  connectResultsWebSocket() {
+    try {
+      if (this.wsResults && (this.wsResults.readyState === WebSocket.OPEN || this.wsResults.readyState === WebSocket.CONNECTING)) return;
+      console.log('[AgentAssist][WS][RESULTS] Connecting...');
+      this.wsResults = new WebSocket(this.WEBSOCKET_RESULTS_URL);
+      this.wsResults.onopen = () => {
+        console.log('[AgentAssist][WS][RESULTS] Connected');
+      };
+      this.wsResults.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          console.log('[AgentAssist][WS][RESULTS] Object:', data); // per user: log objects to console
+        } catch(e){ console.warn('[AgentAssist][WS][RESULTS] Non-JSON message', evt.data); }
+      };
+      this.wsResults.onerror = (e) => { console.error('[AgentAssist][WS][RESULTS] Error', e); };
+      this.wsResults.onclose = (e) => { console.log('[AgentAssist][WS][RESULTS] Closed', e.code, e.reason); setTimeout(()=>this.connectResultsWebSocket(), 3000); };
+    } catch(err){ console.error('[AgentAssist][WS][RESULTS] Connect failed', err); }
+  }
+
+  // Connect to audio websocket (send raw 16k PCM little-endian Int16 frames)
+  connectAudioWebSocket() {
+    try {
+      if (this.wsAudio && (this.wsAudio.readyState === WebSocket.OPEN || this.wsAudio.readyState === WebSocket.CONNECTING)) return;
+      console.log('[AgentAssist][WS][AUDIO] Connecting...');
+      this.wsAudio = new WebSocket(this.WEBSOCKET_AUDIO_URL);
+      this.wsAudio.binaryType = 'arraybuffer';
+      this.wsAudio.onopen = () => {
+        console.log('[AgentAssist][WS][AUDIO] Connected');
+        // Flush any queued frames
+        if (this._pendingAudioFrames && this._pendingAudioFrames.length) {
+          this._pendingAudioFrames.forEach(f=>{ try { this.wsAudio.send(f); } catch(e){} });
+          this._pendingAudioFrames = [];
+        }
+      };
+      this.wsAudio.onerror = (e) => { console.error('[AgentAssist][WS][AUDIO] Error', e); };
+      this.wsAudio.onclose = (e) => { console.log('[AgentAssist][WS][AUDIO] Closed', e.code, e.reason); setTimeout(()=>this.connectAudioWebSocket(), 3000); };
+    } catch(err){ console.error('[AgentAssist][WS][AUDIO] Connect failed', err); }
+  }
+
+  // Send Float32Array audio (any sample rate) as 16k PCM Int16 frames to audio websocket
+  sendAudioFrame(float32, sr) {
+    if (!float32 || !float32.length) return;
+    // Resample if needed (simple decimation for now)
+    if (sr !== this.TARGET_SR) {
+      float32 = this.downsampleFloat32(float32, sr, this.TARGET_SR);
+      sr = this.TARGET_SR;
+    }
+    // Convert to Int16 little-endian
+    const pcm16 = new Int16Array(float32.length);
+    for (let i=0;i<float32.length;i++){ let s=float32[i]; s = Math.max(-1, Math.min(1, s)); pcm16[i] = s<0 ? s*0x8000 : s*0x7FFF; }
+    const buf = pcm16.buffer;
+    if (this.wsAudio && this.wsAudio.readyState === WebSocket.OPEN) {
+      try { this.wsAudio.send(buf); } catch(e){ console.warn('[AgentAssist][WS][AUDIO] Send failed', e); }
+    } else {
+      this._pendingAudioFrames = this._pendingAudioFrames || [];
+      this._pendingAudioFrames.push(buf);
     }
   }
 
@@ -264,6 +419,15 @@ class AgentAssistSidebar {
 
     // Clean up tab audio resources
     this.cleanupTabAudio();
+
+    // Optionally keep results socket; don't close here
+  }
+
+  // Explicit full shutdown (mic + websockets)
+  shutdownAll() {
+    this.stopLocalStreaming();
+    try { if (this.wsAudio) { this.wsAudio.close(); this.wsAudio = null; } } catch(e){}
+    // Leave results websocket to auto-reconnect unless explicit
   }
 
   // Real microphone capture with Azure STT
@@ -366,78 +530,16 @@ class AgentAssistSidebar {
     console.log('[AgentAssist][MIC] Processing local audio segment...');
     
     // Downsample if needed
-    if (sr !== this.remoteTranscription.sampleRate) {
-      console.log('[AgentAssist][MIC] Downsampling from', sr, 'to', this.remoteTranscription.sampleRate);
-      float32 = this.downsampleFloat32(float32, sr, this.remoteTranscription.sampleRate);
-      sr = this.remoteTranscription.sampleRate;
+    if (sr !== this.TARGET_SR) {
+      console.log('[AgentAssist][MIC] Downsampling from', sr, 'to', this.TARGET_SR);
+      float32 = this.downsampleFloat32(float32, sr, this.TARGET_SR);
+      sr = this.TARGET_SR;
     }
     
-    // Send to Azure STT
-    this.sendLocalSegmentToAzure(float32, sr);
-  }
-
-  // Send local audio segment to Azure STT
-  sendLocalSegmentToAzure(float32, sr) {
-    console.log('[AgentAssist][MIC] Sending local audio segment to Azure STT...');
-    
-    const rt = this.remoteTranscription;
-    if (!rt.endpoint || !rt.apiKey) {
-      console.log('[AgentAssist][MIC] Azure STT not configured, skipping');
-      return;
-    }
-    
-    // Convert audio to WAV
-    const wavBlob = this.floatToWavBlob(float32, sr);
-    console.log('[AgentAssist][MIC] Audio converted to WAV, size:', wavBlob.size, 'bytes');
-    
-    // Build Azure STT URL
-    const url = new URL(rt.endpoint);
-    url.searchParams.append('language', rt.language);
-    url.searchParams.append('format', rt.format);
-    url.searchParams.append('profanityFilter', rt.profanityFilter);
-    if (rt.enableWordLevelTimestamps) {
-      url.searchParams.append('enableWordLevelTimestamps', 'true');
-    }
-    
-    console.log('[AgentAssist][MIC] Sending to Azure STT:', url.toString());
-    
-    fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        'Ocp-Apim-Subscription-Key': rt.apiKey,
-        'Content-Type': 'audio/wav',
-        'Accept': 'application/json'
-      },
-      body: wavBlob
-    }).then(response => {
-      console.log('[AgentAssist][MIC] Azure STT response status:', response.status);
-      if (!response.ok) {
-        throw new Error(`Azure STT error: ${response.status} ${response.statusText}`);
-      }
-      return response.json();
-    }).then(json => {
-      console.log('[AgentAssist][MIC] Azure STT response:', json);
-      
-      // Handle Azure STT response format
-      let text = '';
-      if (json.DisplayText) {
-        text = json.DisplayText;
-      } else if (json.NBest && json.NBest.length > 0) {
-        text = json.NBest[0].Display || json.NBest[0].Lexical;
-      } else if (json.Text) {
-        text = json.Text;
-      }
-      
-      if (text && text.trim()) {
-        console.log('[AgentAssist][MIC] Transcribed text:', text);
-        this.addTranscript('You', text.trim(), Date.now());
-      } else {
-        console.log('[AgentAssist][MIC] No text in Azure STT response');
-      }
-    }).catch(err => {
-      console.error('[AgentAssist][MIC] Azure STT error:', err);
-    });
-  }
+    // Stream raw audio to websocket
+    this.sendAudioFrame(float32, sr);
+  }  // Send local audio segment to Azure STT - REMOVED
+  // Now using WebSocket audio streaming only
 
   // Set up Web Speech API as backup
   setupWebSpeechAPI() {
@@ -889,118 +991,17 @@ class AgentAssistSidebar {
   handleRemoteSegment(float32, sr) {
     console.log('[AgentAssist][REMOTE] Processing remote audio segment...');
     
-    if (sr !== this.remoteTranscription.sampleRate) {
-      console.log('[AgentAssist][REMOTE] Downsampling from', sr, 'to', this.remoteTranscription.sampleRate);
-      float32 = this.downsampleFloat32(float32, sr, this.remoteTranscription.sampleRate);
-      sr = this.remoteTranscription.sampleRate;
+    if (sr !== this.TARGET_SR) {
+      console.log('[AgentAssist][REMOTE] Downsampling from', sr, 'to', this.TARGET_SR);
+      float32 = this.downsampleFloat32(float32, sr, this.TARGET_SR);
+      sr = this.TARGET_SR;
     }
     
-    this.sendRemoteSegment(float32, sr);
-  }
+    // Stream remote participant audio too (if desired)
+    this.sendAudioFrame(float32, sr);
+  }  // Removed Azure STT remote segment sending - using WebSocket only
 
-  sendRemoteSegment(float32, sr) {
-    console.log('[AgentAssist][REMOTE] Sending remote audio segment to Azure STT...');
-    
-    const rt = this.remoteTranscription;
-    if (!rt.endpoint || !rt.apiKey) {
-      if (!rt.warned) {
-        console.log('[AgentAssist][REMOTE] Azure STT not configured. Please set azureSttRegion and azureSttApiKey in chrome.storage.sync');
-        rt.warned = true;
-      }
-      rt.enabled = false; return;
-    }
-    
-    if (rt.sending) { 
-      console.log('[AgentAssist][REMOTE] Busy, dropping segment'); 
-      return; 
-    }
-    
-    rt.sending = true;
-    console.log('[AgentAssist][REMOTE] Processing remote audio segment...');
-    
-    // Convert audio to proper format for Azure STT
-    const wavBlob = this.floatToWavBlob(float32, sr);
-    console.log('[AgentAssist][REMOTE] Audio converted to WAV, size:', wavBlob.size, 'bytes');
-    
-    // Build Azure STT URL with parameters
-    const url = new URL(rt.endpoint);
-    url.searchParams.append('language', rt.language);
-    url.searchParams.append('format', rt.format);
-    url.searchParams.append('profanityFilter', rt.profanityFilter);
-    if (rt.enableWordLevelTimestamps) {
-      url.searchParams.append('enableWordLevelTimestamps', 'true');
-    }
-    
-    console.log('[AgentAssist][REMOTE] Sending to Azure STT:', url.toString());
-    
-    fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        'Ocp-Apim-Subscription-Key': rt.apiKey,
-        'Content-Type': 'audio/wav',
-        'Accept': 'application/json'
-      },
-      body: wavBlob
-    }).then(response => {
-      console.log('[AgentAssist][REMOTE] Azure STT response status:', response.status);
-      if (!response.ok) {
-        throw new Error(`Azure STT error: ${response.status} ${response.statusText}`);
-      }
-      return response.json();
-    }).then(json => {
-      console.log('[AgentAssist][REMOTE] Azure STT response:', json);
-      
-      // Handle Azure STT response format
-      let text = '';
-      if (json.DisplayText) {
-        text = json.DisplayText;
-      } else if (json.NBest && json.NBest.length > 0) {
-        text = json.NBest[0].Display || json.NBest[0].Lexical;
-      } else if (json.Text) {
-        text = json.Text;
-      }
-      
-      if (text && text.trim()) {
-        console.log('[AgentAssist][REMOTE] Transcribed text:', text);
-        this.addTranscript('Other Participant', text.trim(), Date.now());
-      } else {
-        console.log('[AgentAssist][REMOTE] No text in Azure STT response');
-      }
-    }).catch(err => {
-      console.error('[AgentAssist][REMOTE] Azure STT error:', err);
-    }).finally(() => { 
-      rt.sending = false; 
-      console.log('[AgentAssist][REMOTE] Azure STT request completed');
-    });
-  }
-
-  floatToWavBlob(float32, sampleRate) {
-    // convert to 16-bit PCM and wrap WAV header
-    const pcm16 = new Int16Array(float32.length);
-    for (let i=0;i<float32.length;i++){ let s = Math.max(-1, Math.min(1, float32[i])); pcm16[i] = s<0? s*0x8000 : s*0x7FFF; }
-    const bytesPerSample = 2;
-    const blockAlign = 1 * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    const buffer = new ArrayBuffer(44 + pcm16.length * bytesPerSample);
-    const view = new DataView(buffer);
-    let offset = 0;
-    const writeStr = (s)=>{ for (let i=0;i<s.length;i++) view.setUint8(offset++, s.charCodeAt(i)); };
-    writeStr('RIFF');
-    view.setUint32(offset, 36 + pcm16.length * bytesPerSample, true); offset += 4;
-    writeStr('WAVE');
-    writeStr('fmt ');
-    view.setUint32(offset,16,true); offset+=4; // subchunk1 size
-    view.setUint16(offset,1,true); offset+=2; // PCM
-    view.setUint16(offset,1,true); offset+=2; // channels
-    view.setUint32(offset,sampleRate,true); offset+=4;
-    view.setUint32(offset,byteRate,true); offset+=4;
-    view.setUint16(offset,blockAlign,true); offset+=2;
-    view.setUint16(offset,16,true); offset+=2; // bits per sample
-    writeStr('data');
-    view.setUint32(offset, pcm16.length * bytesPerSample, true); offset+=4;
-    for (let i=0;i<pcm16.length;i++,offset+=2) view.setInt16(offset, pcm16[i], true);
-    return new Blob([buffer], { type: 'audio/wav' });
-  }
+  // Removed WAV conversion (was for Azure STT)
 
   // Enhanced visual speaking detection for when audio capture fails
   setupEnhancedSpeakingDetection() {
@@ -1454,27 +1455,15 @@ class AgentAssistSidebar {
     console.log('[AgentAssist] All audio resources cleaned up');
   }
 
-  // Configure remote STT endpoint + key, persists if possible
-  setRemoteSttConfig(endpoint, apiKey) {
-    this.remoteTranscription.endpoint = endpoint || null;
-    this.remoteTranscription.apiKey = apiKey || null;
-    this.remoteTranscription.enabled = !!endpoint;
-    if (typeof chrome !== 'undefined' && chrome?.storage?.sync) {
-      try {
-        chrome.storage.sync.set({
-          remoteSttEndpoint: this.remoteTranscription.endpoint,
-          remoteSttApiKey: this.remoteTranscription.apiKey
-        }, () => console.log('[AgentAssist][REMOTE] STT config saved'));
-      } catch(e){ console.warn('[AgentAssist][REMOTE] Persist error', e); }
-    } else {
-      console.log('[AgentAssist][REMOTE] No chrome.storage available (page context).');
-    }
-    console.log('[AgentAssist][REMOTE] Endpoint set:', !!this.remoteTranscription.endpoint);
-  }
+  // Configure remote STT endpoint + key - REMOVED (Azure functionality)
+  // Using WebSocket audio streaming only
+  
+  // Removed Azure STT configuration functions
+  // configureAzureStt() and setRemoteSttConfig() are no longer needed
 
   setupDraggable() {
     if (!this.sidebar) return;
-    const header = this.sidebar.querySelector('.agent-assist-header');
+    const dragHandle = this.sidebar.querySelector('.agent-assist-drag-handle');
     let isDragging = false;
     let currentX;
     let currentY;
@@ -1484,7 +1473,8 @@ class AgentAssistSidebar {
     let yOffset = 0;
 
     const dragStart = (e) => {
-        if (e.target.closest('.transparency-toggle')) return; // Don't drag when clicking toggle
+        // Only allow dragging from the drag handle, not from buttons
+        if (!e.target.closest('.agent-assist-drag-handle')) return;
         
         if (e.type === "touchstart") {
             initialX = e.touches[0].clientX - xOffset;
@@ -1494,13 +1484,13 @@ class AgentAssistSidebar {
             initialY = e.clientY - yOffset;
         }
         
-        if (e.target === header) {
-            isDragging = true;
-        }
+        isDragging = true;
+        this.sidebar.classList.add('dragging');
     };
 
     const dragEnd = () => {
         isDragging = false;
+        this.sidebar.classList.remove('dragging');
     };
 
     const drag = (e) => {
@@ -1532,31 +1522,14 @@ class AgentAssistSidebar {
         this.removeLayoutPush(); // Remove layout pushing when dragged
     };
 
-    header.addEventListener('touchstart', dragStart, false);
-    header.addEventListener('touchend', dragEnd, false);
-    header.addEventListener('touchmove', drag, false);
-    header.addEventListener('mousedown', dragStart, false);
+    // Add event listeners to the drag handle
+    dragHandle.addEventListener('touchstart', dragStart, false);
+    dragHandle.addEventListener('touchend', dragEnd, false);
+    dragHandle.addEventListener('touchmove', drag, false);
+    dragHandle.addEventListener('mousedown', dragStart, false);
     document.addEventListener('mousemove', drag, false);
     document.addEventListener('mouseup', dragEnd, false);
 }
-
-setupTransparencyToggle() {
-    if (!this.sidebar) return;
-    const toggle = this.sidebar.querySelector('.transparency-toggle');
-    toggle.addEventListener('click', () => {
-        this.sidebar.classList.toggle('transparent');
-        toggle.classList.toggle('active');
-        // Save state to local storage if needed
-        localStorage.setItem('agentAssistTransparent', this.sidebar.classList.contains('transparent'));
-    });
-    
-    // Restore previous state
-    if (localStorage.getItem('agentAssistTransparent') === 'true') {
-        this.sidebar.classList.add('transparent');
-        toggle.classList.add('active');
-    }
-}
-
 
   getTabHTML(tab) {
     const s = this.state;
@@ -1757,44 +1730,7 @@ show() {
     if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { this.switchTab(tabs[idx].dataset.tab); }
   }
 
-  // Configure Azure STT endpoint and API key
-  configureAzureStt(region, apiKey) {
-    if (region && apiKey) {
-      this.remoteTranscription.region = region;
-      this.remoteTranscription.endpoint = `https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`;
-      this.remoteTranscription.apiKey = apiKey;
-      this.remoteTranscription.enabled = true;
-      
-      // Persist to chrome storage
-      try {
-        chrome.storage.sync.set({
-          azureSttRegion: this.remoteTranscription.region,
-          azureSttApiKey: this.remoteTranscription.apiKey
-        });
-      } catch(e) { /* storage not available */ }
-      
-      console.log('[AgentAssist][AZURE] Azure STT configured successfully');
-      console.log('[AgentAssist][AZURE] Region:', region);
-      console.log('[AgentAssist][AZURE] Endpoint:', this.remoteTranscription.endpoint);
-    } else {
-      this.remoteTranscription.enabled = false;
-      console.log('[AgentAssist][AZURE] Azure STT configuration cleared');
-    }
-  }
-
-  // Legacy function for backward compatibility
-  setRemoteSttConfig(endpoint, apiKey) {
-    console.log('[AgentAssist][LEGACY] setRemoteSttConfig called - please use configureAzureStt(region, apiKey) instead');
-    if (endpoint && apiKey) {
-      // Try to extract region from endpoint
-      const match = endpoint.match(/https:\/\/([^.]+)\.stt\.speech\.microsoft\.com/);
-      if (match) {
-        this.configureAzureStt(match[1], apiKey);
-      } else {
-        console.log('[AgentAssist][LEGACY] Could not extract region from endpoint, please use configureAzureStt directly');
-      }
-    }
-  }
+  // Removed Azure STT configuration functions
 
 }
 
@@ -1804,17 +1740,7 @@ let agentAssist;
 function initializeAgentAssist() { 
   if (window.location.hostname === 'meet.google.com' && !agentAssist) { 
     agentAssist = new AgentAssistSidebar(); 
-    // Expose global helper for quick config from page console
-    window.AgentAssistConfigureAzureSTT = (region, apiKey) => {
-      if (!agentAssist) return;
-      agentAssist.configureAzureStt(region, apiKey);
-    };
-    
-    // Legacy helper for backward compatibility
-    window.AgentAssistSetRemoteSTT = (endpoint, apiKey) => {
-      if (!agentAssist) return;
-      agentAssist.setRemoteSttConfig(endpoint, apiKey);
-    };
+    // Removed Azure STT configuration helpers
     
     // Debug helper to check speech recognition status
     window.AgentAssistDebugStatus = () => {
@@ -1830,7 +1756,7 @@ function initializeAgentAssist() {
           state: agentAssist.speechRecognition.state,
           handlersSet: agentAssist.speechRecognition._handlersSet
         } : null,
-        azureConfigured: !!(agentAssist.remoteTranscription.endpoint && agentAssist.remoteTranscription.apiKey)
+        websocketConnected: !!(agentAssist.wsAudio && agentAssist.wsAudio.readyState === WebSocket.OPEN)
       });
     };
   } 
@@ -1864,26 +1790,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Allow page scripts / console in page context to configure STT via postMessage
+// Allow page scripts / console in page context to configure via postMessage - REMOVED Azure functionality
 window.addEventListener('message', (evt) => {
   try {
     if (!evt || evt.source !== window) return;
     const d = evt.data;
     if (!d || typeof d !== 'object') return;
-    if (d.type === 'AA_CONFIGURE_AZURE_STT' && agentAssist) {
-      agentAssist.configureAzureStt(d.region, d.apiKey);
-      console.log('[AgentAssist][AZURE] Config updated via postMessage');
-    } else if (d.type === 'AA_SET_REMOTE_STT' && agentAssist) {
-      agentAssist.setRemoteSttConfig(d.endpoint, d.apiKey);
-      console.log('[AgentAssist][REMOTE] Config updated via postMessage');
-    }
+    // Removed Azure STT configuration via postMessage
   } catch(e) {}
 });
 
 // Handle page unload to cleanup connections
 window.addEventListener('beforeunload', () => {
   if (agentAssist && agentAssist.isStreaming) {
-    agentAssist.stopLocalStreaming();
+  agentAssist.shutdownAll();
   }
   
   // Clear any pending timeouts

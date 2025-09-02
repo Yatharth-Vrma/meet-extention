@@ -35,7 +35,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["audio-vad-processor.js"],
+      "resources": ["audio-vad-processor.js", "icons/logo.png"],
       "matches": ["<all_urls>"]
     }
   ]
