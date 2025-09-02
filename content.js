@@ -1977,7 +1977,23 @@ class AgentAssistSidebar {
     const s = this.state;
     switch (tab) {
       case 'assist':
-        if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
+        if (!s.suggestions.length) return `<div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 206px; height: 98px; left: calc(50% - 206px/2 + 0.5px); top: calc(50% - 98px/2);">
+          <div style="box-sizing: border-box; width: 40px; height: 40px; position: relative; flex: none; order: 0; flex-grow: 0;">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: 0; top: 0;">
+              <path d="M4 0.5H36C37.933 0.5 39.5 2.067 39.5 4V36C39.5 37.933 37.933 39.5 36 39.5H4C2.067 39.5 0.5 37.933 0.5 36V4C0.5 2.067 2.067 0.5 4 0.5Z" stroke="#F1F1F1"/>
+              <path d="M20 16.6663V13.333H16.666" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M25 16.667H15C14.0795 16.667 13.333 17.4132 13.333 18.3337V25.0003C13.333 25.9208 14.0795 26.667 15 26.667H25C25.9205 26.667 26.667 25.9208 26.667 25.0003V18.3337C26.667 17.4132 25.9205 16.667 25 16.667Z" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M11.666 21.667H13.333" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M26.666 21.667H28.333" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M22.5 20.833V22.4997" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M17.5 20.833V22.4997" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 8px; width: 206px; height: 42px; flex: none; order: 1; flex-grow: 0;">
+            <div style="width: 140px; height: 18px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 14px; line-height: 18px; text-align: center; color: #2E2D2F; flex: none; order: 0; flex-grow: 0;">Displaying Nudges...</div>
+            <div style="width: 206px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the nudges appear</div>
+          </div>
+        </div>`;
         return `<div class="aa-suggestions">` + s.suggestions.slice().reverse().map((obj,i) => {
           const item = typeof obj === 'string' ? { text: obj } : obj;
           const barClass = item.bar==='green' ? ' bar-green' : '';
@@ -1985,7 +2001,19 @@ class AgentAssistSidebar {
         }).join('') + '</div>';
       case 'script':
          if (!s.transcripts.length) 
-            return this.emptyState('📝', 'Transcript', 'Live transcript will appear here.');
+            return `<div style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 229px; height: 98px; left: calc(50% - 229px/2 + 0.5px); top: calc(50% - 98px/2);">
+              <div style="box-sizing: border-box; width: 40px; height: 40px; position: relative; flex: none; order: 0; flex-grow: 0;">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: 0; top: 0;">
+                  <path d="M4 0.5H36C37.933 0.5 39.5 2.067 39.5 4V36C39.5 37.933 37.933 39.5 36 39.5H4C2.067 39.5 0.5 37.933 0.5 36V4C0.5 2.067 2.067 0.5 4 0.5Z" stroke="#F1F1F1"/>
+                  <path d="M26.334 24.1667V14.1667C26.334 13.7246 26.158 13.3007 25.846 12.9882C25.533 12.6756 25.109 12.5 24.667 12.5H13.834" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M17.166 27.5H27.166C27.608 27.5 28.032 27.3244 28.345 27.0118C28.657 26.6993 28.833 26.2754 28.833 25.8333V25C28.833 24.779 28.745 24.567 28.589 24.4107C28.432 24.2545 28.22 24.1667 27.999 24.1667H19.666C19.445 24.1667 19.233 24.2545 19.077 24.4107C18.92 24.567 18.833 24.779 18.833 25V25.8333C18.833 26.2754 18.657 26.6993 18.345 27.0118C18.032 27.3244 17.608 27.5 17.166 27.5ZM17.166 27.5C16.724 27.5 16.3 27.3244 15.988 27.0118C15.675 26.6993 15.499 26.2754 15.499 25.8333V14.1667C15.499 13.7246 15.324 13.3007 15.011 12.9882C14.699 12.6756 14.275 12.5 13.833 12.5C13.391 12.5 12.967 12.6756 12.654 12.9882C12.342 13.3007 12.166 13.7246 12.166 14.1667V15.8333C12.166 16.0543 12.254 16.2663 12.41 16.4226C12.566 16.5789 12.778 16.6667 12.999 16.6667H15.499" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 8px; width: 229px; height: 42px; flex: none; order: 1; align-self: stretch; flex-grow: 0;">
+                <div style="width: 128px; height: 18px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 14px; line-height: 18px; text-align: center; color: #2E2D2F; flex: none; order: 0; flex-grow: 0;">Displaying Script...</div>
+                <div style="width: 229px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the script appeared</div>
+              </div>
+            </div>`;
           
           //const aggregated = s.transcripts.map(t => t.text).join(' ');
           const entries = s.transcripts.slice().reverse().map(t => {
@@ -2000,11 +2028,22 @@ class AgentAssistSidebar {
           }).join('');
           return entries;
       case 'score':
-        if (!s.scores.length) {
-          // Provide a default example card similar to screenshot
-          return `<div class="aa-card accent-positive"><div class="aa-meta">${new Date().toLocaleDateString()}</div><div class="aa-title">Subject: Interview Coordination <span class="aa-pill">Positive</span></div><div class="aa-body">Result: Switching between 3–4 platforms to coordinate a single interview, leading to inefficiencies and dropped communication.</div><div class="aa-subtitle">Main Discussion Highlights:</div><ul class="aa-bullets"><li>Interview reschedules impact candidate perception and conversion rates.</li><li>Exploring solutions that auto-sync calendars and reduce manual coordination.</li></ul><div class="aa-subtitle">Key Numbers:</div><ul class="aa-bullets"><li>4+ tools used per interview cycle.</li><li>>60% of interviews require at least one reschedule.</li></ul><a class="aa-link" href="#" tabindex="-1">See Less</a></div>`;
-        }
-        return s.scores.slice().reverse().map(sc => `<div class="aa-card ${sc.score>=80?'accent-positive':''}"><div class="aa-meta">${new Date(sc.timestamp).toLocaleDateString()}</div><div class="aa-title">Score Update <span class="aa-pill">${sc.badge||'Update'}</span></div><div class="aa-body">${sc.feedback||''}</div></div>`).join('');
+        return `<div style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 231px; height: 98px; left: calc(50% - 231px/2 + 0.5px); top: calc(50% - 98px/2);">
+                  <div style="box-sizing: border-box; width: 40px; height: 40px; border: 1px solid #F1F1F1; border-radius: 4px; flex: none; order: 0; flex-grow: 0; position: relative; display: flex; align-items: center; justify-content: center;">
+                    <svg width="21" height="20" viewBox="0 0 21 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M10.5 13.334V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M13.834 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M17.166 8.33398V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M18.8327 2.5L11.6277 9.705C11.589 9.7438 11.543 9.77459 11.4924 9.79559C11.4418 9.8166 11.3875 9.82741 11.3327 9.82741C11.2779 9.82741 11.2236 9.8166 11.173 9.79559C11.1224 9.77459 11.0764 9.7438 11.0377 9.705L8.29435 6.96167C8.21621 6.88355 8.11025 6.83967 7.99977 6.83967C7.88928 6.83967 7.78332 6.88355 7.70518 6.96167L2.16602 12.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M3.83398 15V17.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M7.16602 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 8px; width: 231px; height: 42px; flex: none; order: 1; flex-grow: 0;">
+                    <div style="width: 231px; height: 18px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 14px; line-height: 18px; text-align: center; color: #2E2D2F; flex: none; order: 0; align-self: stretch; flex-grow: 0;">Displaying Score...</div>
+                    <div style="width: 231px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the score is generated.</div>
+                  </div>
+                </div>`;
       case 'history':
         if (!s.history.length) return this.emptyState('📚','History Empty','Past meeting summaries will appear here.');
         return s.history.slice().reverse().map(h => `<div class="aa-history-item"><div class="aa-history-date">${new Date(h.timestamp).toLocaleString()}</div><div class="aa-history-title">${h.title}</div><div class="aa-history-participants">${h.participants||''}</div></div>`).join('');
