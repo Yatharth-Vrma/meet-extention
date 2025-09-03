@@ -277,22 +277,28 @@
 }
 
 .agent-assist-brand {
-  /* Meeting name */
-  width: 11.625rem;  /* 186px */
-  height: 1.125rem;  /* 18px */
+  /* Meeting name - updated for better text handling */
+  min-width: 11.625rem;  /* 186px minimum */
+  max-width: 20rem;      /* 320px maximum - extends to the right */
+  height: 1.125rem;      /* 18px */
   font-family: var(--aa-font-family) !important;
   font-style: normal;
   font-weight: 500;
-  font-size: 0.875rem;  /* 14px */
-  line-height: 1.125rem;  /* 18px - identical to box height, or 129% */
+  font-size: 0.875rem;   /* 14px */
+  line-height: 1.125rem; /* 18px - identical to box height, or 129% */
   color: #353436;
   user-select: none;
   
+  /* Text overflow handling */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  
   /* Inside auto layout */
-  flex: none;
+  flex: 1 1 auto;        /* Allow growth and shrinkage */
   order: 0;
   align-self: stretch;
-  flex-grow: 0;
+  min-width: 0;          /* Allow flexbox shrinking */
 }
 
 .agent-assist-header__status {
@@ -1158,6 +1164,120 @@
   margin-top: var(--aa-spacing-sm);
 }
 
+/* Score Metrics Container - Key Metrics Layout */
+.aa-score-metrics-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0;
+  gap: 0.75rem; /* 12px */
+  width: 100%;
+  max-width: 20rem; /* 320px max width */
+  height: 4rem; /* 64px */
+  margin: 0 auto 1.25rem auto; /* Center horizontally and add bottom margin */
+}
+
+/* Individual Metric Box */
+.aa-score-metric-box {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 0.5rem; /* 8px */
+  gap: 0.25rem; /* 4px */
+  width: 9.625rem; /* 154px */
+  height: 4rem; /* 64px */
+  border: 1px solid var(--aa-border-light);
+  border-radius: var(--aa-radius-sm);
+  flex: 1;
+  background: var(--aa-bg-primary);
+  transition: all var(--aa-transition-base);
+}
+
+.aa-score-metric-box:hover {
+  box-shadow: var(--aa-shadow-light);
+  border-color: var(--aa-border-default);
+}
+
+/* Metric Label Row (Icon + Text) */
+.aa-metric-label-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0;
+  gap: 0.25rem; /* 4px */
+  width: 100%;
+  height: 1rem; /* 16px */
+  flex-shrink: 0;
+}
+
+/* Metric Icon */
+.aa-metric-icon {
+  width: 0.875rem; /* 14px */
+  height: 0.875rem; /* 14px */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.aa-metric-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Metric Label Text */
+.aa-metric-label {
+  font-family: var(--aa-font-family);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 0.75rem; /* 12px */
+  line-height: 1rem; /* 16px */
+  color: var(--aa-text-secondary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Metric Value */
+.aa-metric-value {
+  font-family: var(--aa-font-family);
+  font-style: normal;
+  font-weight: 500;
+  font-size: 1.25rem; /* 20px */
+  line-height: 1.75rem; /* 28px */
+  color: var(--aa-primary);
+  width: 100%;
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 400px) {
+  .aa-score-metrics-container {
+    width: 100%;
+    max-width: calc(100% - 1.25rem); /* Account for sidebar padding */
+    gap: 0.5rem; /* Smaller gap on mobile */
+  }
+  
+  .aa-score-metric-box {
+    width: calc(50% - 0.25rem); /* Equal width boxes with gap */
+    min-width: 0; /* Allow flexbox to shrink */
+  }
+  
+  .aa-metric-label {
+    font-size: 0.6875rem; /* 11px - slightly smaller on mobile */
+  }
+  
+  .aa-metric-value {
+    font-size: 1.125rem; /* 18px - slightly smaller on mobile */
+    line-height: 1.5rem; /* 24px */
+  }
+}
+
 /* Responsive Design */
 @media (max-height: 600px) {
   .agent-assist-sidebar {
@@ -1272,4 +1392,182 @@
   line-height: 1.375;
   color: #FFFFFF;
   z-index: 1000;
+}
+
+/* New Coach Layout Styles - Horizontal Scroll */
+.aa-coach-new-layout {
+  position: relative;
+  width: 360px;
+  height: 692px;
+  background: #FFFFFF;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+}
+
+/* Coach intro message container */
+.aa-coach-intro-container {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 0px;
+  gap: 8px;
+  
+  position: absolute;
+  width: 320px;
+  height: 68px;
+  left: 20px;
+  top: 20px;
+}
+
+/* Coach icon container */
+.aa-coach-icon-container {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  background: #FFFFFF;
+  border: 1px solid #EEEEFB;
+  border-radius: 8px;
+  flex: none;
+  order: 0;
+  flex-grow: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Coach intro message */
+.aa-coach-intro-message {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding: 12px;
+  gap: 8px;
+  width: 280px;
+  height: 68px;
+  background: #EEEEFB;
+  border-radius: 0px 8px 8px 8px;
+  flex: none;
+  order: 1;
+  flex-grow: 0;
+}
+
+.aa-coach-intro-message p {
+  width: 256px;
+  height: 44px;
+  font-family: 'SF Pro Text';
+  font-style: normal;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 22px;
+  color: #353436;
+  flex: none;
+  order: 0;
+  flex-grow: 1;
+  margin: 0;
+}
+
+/* Bottom section */
+.aa-coach-bottom-section {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 20px;
+  gap: 8px;
+  position: absolute;
+  width: 360px;
+  height: 64px;
+  left: 0px;
+  bottom: 0px;
+  background: #FFFFFF;
+  border-top: 1px solid #F1F1F1;
+}
+
+/* Search bar */
+.aa-coach-search-bar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+  width: 320px;
+  height: 40px;
+  background: #F9F9FA;
+  border: 1px solid #565ADD;
+  border-radius: 4px;
+  flex: none;
+  order: 0;
+  align-self: stretch;
+  flex-grow: 0;
+}
+
+/* Ask Anything placeholder */
+.aa-coach-search-placeholder {
+  width: 90px;
+  height: 22px;
+  font-family: 'SF Pro Text';
+  font-style: normal;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 22px;
+  color: #949395;
+  flex: none;
+  order: 0;
+  flex-grow: 0;
+  text-align: center;
+}
+
+/* Action button for search */
+.aa-coach-search-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  flex: none;
+  order: 1;
+  flex-grow: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.aa-coach-search-button:hover {
+  background: rgba(86, 90, 221, 0.1);
+}
+
+/* Horizontal Scrollbar Styling for Coach Layout */
+.aa-coach-new-layout::-webkit-scrollbar {
+  height: 6px;
+}
+
+.aa-coach-new-layout::-webkit-scrollbar-track {
+  background: #F1F1F1;
+  border-radius: 3px;
+}
+
+.aa-coach-new-layout::-webkit-scrollbar-thumb {
+  background: #565ADD;
+  border-radius: 3px;
+}
+
+.aa-coach-new-layout::-webkit-scrollbar-thumb:hover {
+  background: #4549C7;
+}
+
+/* Firefox scrollbar styling */
+.aa-coach-new-layout {
+  scrollbar-width: thin;
+  scrollbar-color: #565ADD #F1F1F1;
 }
