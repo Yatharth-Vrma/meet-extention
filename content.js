@@ -1563,6 +1563,7 @@ async handleCategory(category) {
     const nudgeText = typeof item.nudges === 'string' ? item.nudges.trim() : '';
     if (item.value === 'Yes') {
       subcat_status = "completed";
+      nudgeClass = 'completed';
     } else if (item.value === 'Partial Yes') {
       nudgeClass = 'quickAction';
     } else if (item.value === 'No' || item.value === undefined) {
@@ -1574,7 +1575,7 @@ async handleCategory(category) {
       nudgeClass = 'missednudge';
     }
     const nudgesHTML = nudgeText !== '' ? `
-      <div class="nudgesSection ${nudgeClass}">
+      <div class="aa-suggestion ${nudgeClass}">
         <h5>${item.subcat}</h5>
         <ul>
           ${nudgeText.split('\n').map(n => `<li>${n.trim()}</li>`).join('')}
@@ -3037,9 +3038,15 @@ async processQueue() {
         */
         if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
         return `<div class="aa-suggestions">` + 
-          s.suggestions.slice().reverse().map(item => 
-            `<div class="aa-suggestion">${typeof item === 'string' ? item : this.escapeHTML(item.text)}</div>`
-          ).join('') +
+          s.suggestions.slice().reverse().map(item => {
+            // If item is already an HTML string (contains HTML tags), use it directly
+            // Otherwise wrap it in aa-suggestion div
+            if (typeof item === 'string' && item.includes('<div class="aa-suggestion')) {
+              return item;
+            } else {
+              return `<div class="aa-suggestion">${typeof item === 'string' ? item : this.escapeHTML(item.text)}</div>`;
+            }
+          }).join('') +
         `</div>`;
         
       case 'script':
