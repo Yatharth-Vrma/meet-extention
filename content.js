@@ -1543,13 +1543,13 @@ class AgentAssistSidebar {
     console.log('[AgentAssist][STOP] Extension stopped successfully');
   }
 
+masterDelay = 10000;
 delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async handleCategory(category) {
   let formattedData = [];
-
   if (Array.isArray(category)) {
     formattedData = category;
   } else if (typeof category === 'object' && category !== null) {
@@ -1581,7 +1581,7 @@ async handleCategory(category) {
           ${nudgeText.split('\n').map(n => `<li>${n.trim()}</li>`).join('')}
         </ul>  
       </div>` : '';
-    await this.delay(5000);
+    await this.delay(this.masterDelay);
     this.state.suggestions.push(nudgesHTML);
   }
   this.switchTab('assist');  // Switch tab after all items rendered
@@ -1655,7 +1655,7 @@ async processQueue() {
           }
          if (data.action === 'analysis' && data.analysis_result !== undefined) {
             const formattedData = this.formatData(data.analysis_result.response);
-            //console.log(formattedData)
+            console.log(formattedData)
             if (Array.isArray(formattedData)) {
               formattedData.forEach(catObj => {
                 if (catObj.show_nudge && Array.isArray(catObj.subcategories)) {
