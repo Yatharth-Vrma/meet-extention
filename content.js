@@ -4,6 +4,7 @@ function aaDebounce(fn, wait = 100) { let t; return (...args) => { clearTimeout(
 class AgentAssistSidebar {
   constructor() {
     this.processing = false;
+    this.switchtoAssist = true;
     this.queue = [];
     this.state = {
       visible: false,
@@ -84,6 +85,10 @@ class AgentAssistSidebar {
     this.layoutSelectors = [
       '.R1Qczc', '.crqnQb', '.T4LgNb', '[data-allocation-index]', 'main'
     ];
+    
+    // Score tracking for analysis results
+    this.totalScore = 0; // Initialize total score for analysis
+    
     this.init();
   }
 
@@ -1584,7 +1589,11 @@ async handleCategory(category) {
     await this.delay(this.masterDelay);
     this.state.suggestions.push(nudgesHTML);
   }
-  this.switchTab('assist');  // Switch tab after all items rendered
+  if(this.switchtoAssist){
+    this.switchTab('assist'); 
+    this.switchtoAssist = false;
+  }
+   // Switch tab after all items rendered
 }
   
 async processQueue() {
@@ -1656,6 +1665,29 @@ async processQueue() {
          if (data.action === 'analysis' && data.analysis_result !== undefined) {
             const formattedData = this.formatData(data.analysis_result.response);
             console.log(formattedData)
+            
+            // Calculate total score from all cat_score values
+            if (Array.isArray(formattedData)) {
+              let tempScore = 0;
+              formattedData.forEach(catObj => {
+                if (catObj.catscore !== undefined && catObj.catscore !== null) {
+
+                  tempScore += Number(catObj.catscore);
+                  console.log(catObj.catscore, 'CatScore:' + tempScore);
+                }
+              });
+              console.log(tempScore)
+              console.log(this.tempScore)
+              this.totalScore = tempScore;
+            }
+            console.log('[AgentAssist][SCORE] Total calculated score:', this.totalScore);
+          
+            
+            // Update score tab if it's currently active
+            if (this.state.currentTab === 'score') {
+              this.renderCurrentTab();
+            }
+            
             if (Array.isArray(formattedData)) {
               formattedData.forEach(catObj => {
                 if (catObj.show_nudge && Array.isArray(catObj.subcategories)) {
@@ -3113,7 +3145,7 @@ async processQueue() {
                       </div>
                       <div class="aa-metric-label">Score</div>
                     </div>
-                    <div class="aa-metric-value">${s.scores.length > 0 ? s.scores[s.scores.length - 1].score : '73'}</div>
+                    <div class="aa-metric-value">${this.totalScore}</div>
                   </div>
                   
                   <!-- Second metric box - Categories covered -->
