@@ -51,6 +51,21 @@ class AgentAssistSidebar {
       system: '0' // Set to '1' if you want system audio too
     };
 
+    // Timer functionality for voice recorder style
+    this.totalRecordedTime = 0; // Total accumulated recording time
+    this.sessionTimer = null; // Active recording timer
+    this.sessionStartTime = null; // When current session started
+    this.isRecording = false; // Recording state
+    this.displayTimer = null; // Display update timer
+    this.titleUpdateInterval = null; // Title update interval
+    
+    // Timer state object for popup synchronization
+    this.timerState = {
+      isRunning: false,
+      accumulatedTime: 0,
+      sessionStartTime: null
+    };
+
   // Fixed WebSocket endpoints (as provided) for audio streaming & results
   // NOTE: Per user request, query string kept exactly as supplied (including spaces)
   this.WEBSOCKET_RESULTS_URL = "wss://devreal.darwix.ai/ws/live-results?user_id=rajat.kumawat@cur8.in&manager_id=4248&company_id=31&team_id=23&full_name=Rajat kumawat&region=east";
@@ -83,6 +98,9 @@ class AgentAssistSidebar {
     this.observeEnvironment();
     this.scheduleContextUpdates();
     
+    // Start periodic updates for dynamic content
+    this.startPeriodicUpdates();
+    
     // Make sure the toggle button is still visible, but don't show the extension automatically
     setTimeout(() => {
       this.ensureToggleButton();
@@ -98,6 +116,963 @@ class AgentAssistSidebar {
     }, 2000);
   }  generateSessionId() {
     return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  // Get dynamic meeting title (completely redesigned)
+  getMeetingTitle() {
+    console.log('[AgentAssist][TITLE] Getting meeting title...');
+    
+    // Step 1: Check if meeting has started by looking for participants
+    const participants = this.getParticipants();
+    console.log('[AgentAssist][TITLE] Participants found:', participants);
+    
+    if (participants.length === 0) {
+      // No participants = meeting not started
+      if (this.isOnWaitingPage()) {
+        console.log('[AgentAssist][TITLE] On waiting page - Meeting Not Started');
+        return 'Meeting Not Started';
+      }
+    }
+    
+    // Step 2: Prioritize participant names over meeting codes
+    if (participants.length > 0) {
+      const title = this.generateParticipantBasedTitle(participants);
+      console.log('[AgentAssist][TITLE] Generated participant-based title:', title);
+      return title;
+    }
+    
+    // Step 3: Try to get actual meeting room name/title (but avoid meeting codes)
+    const meetingName = this.extractMeetingRoomName();
+    if (meetingName && meetingName !== 'Google Meet' && !meetingName.startsWith('Meeting ')) {
+      console.log('[AgentAssist][TITLE] Found meeting room name:', meetingName);
+      return meetingName;
+    }
+    
+    // Step 4: Final fallback
+    console.log('[AgentAssist][TITLE] Using fallback title');
+    return 'Team Meeting';
+  }
+
+  // Check if user is on waiting/pre-meeting page
+  isOnWaitingPage() {
+    // Check URL patterns
+    const url = window.location.href;
+    const isWaitingUrl = url.includes('meet.google.com') && 
+                        (!url.includes('/') || url.endsWith('/'));
+    
+    // Check for waiting UI elements
+    const waitingSelectors = [
+      'button[aria-label*="Join"]',
+      'button[aria-label*="join"]', 
+      '.VfPpkd-LgbsSe[aria-label*="Join"]',
+      '[data-idom-class*="join"]',
+      '.P9KVBf', // Waiting room
+      '.HnRr5d', // Join button
+      '.NPEfkd', // Waiting indicator
+      'button[jsname="b0t70b"]',
+      'button[jsname="Qx7uuf"]'
+    ];
+    
+    const hasWaitingElements = waitingSelectors.some(selector => {
+      const element = document.querySelector(selector);
+      return element && element.offsetParent !== null; // Element exists and is visible
+    });
+    
+    // Check for absence of meeting interface
+    const meetingSelectors = [
+      '.R1Qczc', // Main video area
+      '.crqnQb', // Video container
+      '[data-participant-id]',
+      '.XEazBc' // Participant elements
+    ];
+    
+    const hasMeetingElements = meetingSelectors.some(selector => 
+      document.querySelector(selector)
+    );
+    
+    console.log('[AgentAssist][WAITING] URL check:', isWaitingUrl);
+    console.log('[AgentAssist][WAITING] Has waiting elements:', hasWaitingElements);
+    console.log('[AgentAssist][WAITING] Has meeting elements:', hasMeetingElements);
+    
+    return isWaitingUrl || hasWaitingElements || !hasMeetingElements;
+  }
+
+  // Extract actual meeting room name from various sources
+  extractMeetingRoomName() {
+    const titleSources = [
+      // Method 1: Page title
+      () => {
+        const title = document.title;
+        if (title && title.includes(' - ')) {
+          const parts = title.split(' - ');
+          for (const part of parts) {
+            const cleaned = part.trim();
+            if (cleaned && 
+                cleaned !== 'Google Meet' && 
+                cleaned !== 'Meet' &&
+                !cleaned.includes('Google') &&
+                !this.isMeetingCode(cleaned) && // Avoid meeting codes
+                cleaned.length > 2) {
+              return cleaned;
+            }
+          }
+        }
+        return null;
+      },
+      
+      // Method 2: Meeting title elements
+      () => {
+        const selectors = [
+          '[data-meeting-title]',
+          '.u6vdEc',
+          'h1[dir="auto"]',
+          '.ZjFb7c',
+          '[role="heading"]'
+        ];
+        
+        for (const selector of selectors) {
+          const element = document.querySelector(selector);
+          if (element && element.textContent) {
+            const text = element.textContent.trim();
+            if (text && 
+                text !== 'Google Meet' && 
+                !this.isMeetingCode(text) && // Avoid meeting codes
+                text.length > 2) {
+              return text;
+            }
+          }
+        }
+        return null;
+      }
+      
+      // Removed Method 3 (URL meeting code) to prevent duplication
+    ];
+    
+    for (const source of titleSources) {
+      try {
+        const result = source();
+        if (result) {
+          console.log('[AgentAssist][TITLE] Found title from source:', result);
+          return result;
+        }
+      } catch (error) {
+        console.warn('[AgentAssist][TITLE] Error in title source:', error);
+      }
+    }
+    
+    return null;
+  }
+
+  // Helper function to detect if a string is a meeting code
+  isMeetingCode(text) {
+    if (!text) return false;
+    
+    // Check if it's a typical Google Meet code pattern (like "kgh-vdsw-cfw")
+    const meetingCodePattern = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+    const generalCodePattern = /^[a-z0-9]{3,4}-[a-z0-9]{3,4}-[a-z0-9]{3,4}$/;
+    
+    return meetingCodePattern.test(text) || generalCodePattern.test(text);
+  }
+
+  // Generate title based on participant list
+  generateParticipantBasedTitle(participants) {
+    // Filter out current user variations and validate names
+    const otherParticipants = participants.filter(name => {
+      const lowerName = name.toLowerCase();
+      return !lowerName.includes('you') && 
+             !lowerName.includes('(you)') &&
+             this.isRealPersonName(name) &&
+             name.trim().length > 1;
+    });
+    
+    console.log('[AgentAssist][TITLE] Valid other participants:', otherParticipants);
+    
+    if (otherParticipants.length === 0) {
+      // Try to get a more generic meeting title if no valid participants
+      const meetingInfo = this.getAlternativeMeetingInfo();
+      return meetingInfo || 'Personal Meeting';
+    } else if (otherParticipants.length === 1) {
+      // Single participant - use full name
+      return `Meeting with ${otherParticipants[0]}`;
+    } else if (otherParticipants.length === 2) {
+      // Two participants - show both names
+      return `Meeting with ${otherParticipants[0]}, ${otherParticipants[1]}`;
+    } else if (otherParticipants.length === 3) {
+      // Three participants - show all three
+      return `Meeting with ${otherParticipants.join(', ')}`;
+    } else {
+      // More than 3 - show first participant and count
+      return `Meeting with ${otherParticipants[0]} and ${otherParticipants.length - 1} others`;
+    }
+  }
+
+  // Check if a name looks like a real person's name
+  isRealPersonName(name) {
+    if (!name || typeof name !== 'string') return false;
+    
+    const cleaned = name.trim();
+    
+    // Must be reasonable length
+    if (cleaned.length < 2 || cleaned.length > 30) return false;
+    
+    // Must contain letters
+    if (!/[a-zA-Z]/.test(cleaned)) return false;
+    
+    // Must not be all uppercase (likely UI element)
+    if (cleaned === cleaned.toUpperCase() && cleaned.length > 3) return false;
+    
+    // Must not contain underscores (UI elements often do)
+    if (cleaned.includes('_')) return false;
+    
+    // Must not be a common UI pattern
+    if (/^(button|link|text|label|icon|image|div|span|input|select|option|menu|item)$/i.test(cleaned)) {
+      return false;
+    }
+    
+    // Should look like a name (starts with capital letter, reasonable structure)
+    const namePatterns = [
+      /^[A-Z][a-z]+$/,                    // "John"
+      /^[A-Z][a-z]+ [A-Z][a-z]+$/,       // "John Smith"
+      /^[A-Z][a-z]+ [A-Z]\./,            // "John S."
+      /^[A-Z]\. [A-Z][a-z]+$/,           // "J. Smith"
+      /^[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+$/, // "John Michael Smith"
+      /^[A-Z][a-z]+-[A-Z][a-z]+$/,       // "Mary-Jane"
+      /^[A-Z][a-z]+\s[A-Z][a-z]+\s[A-Z][a-z]+$/, // Three names
+    ];
+    
+    return namePatterns.some(pattern => pattern.test(cleaned));
+  }
+
+  // Get alternative meeting information when no participants found
+  getAlternativeMeetingInfo() {
+    // Try to get meeting time or session info
+    const timeElements = document.querySelectorAll('[aria-label*="time"], [title*="time"], .notranslate');
+    
+    for (const element of timeElements) {
+      const text = element.textContent?.trim();
+      if (text && /^\d{1,2}:\d{2}/.test(text)) {
+        return `Meeting Started ${text}`;
+      }
+    }
+    
+    // Check if it's a scheduled meeting
+    const scheduleElements = document.querySelectorAll('[aria-label*="scheduled"], [title*="scheduled"]');
+    if (scheduleElements.length > 0) {
+      return 'Scheduled Meeting';
+    }
+    
+    // Check for meeting room indicators
+    const roomElements = document.querySelectorAll('[aria-label*="room"], [title*="room"]');
+    if (roomElements.length > 0) {
+      return 'Conference Room';
+    }
+    
+    return null;
+  }
+
+  // Get list of participants from the meeting
+  getParticipants() {
+    const participants = [];
+    
+    // Strategy 1: Look for actual participant names in Google Meet's participant UI
+    this.detectFromParticipantPanel(participants);
+    
+    // Strategy 2: Look for names in video tiles/grid view
+    this.detectFromVideoTiles(participants);
+    
+    // Strategy 3: Look for names in speaker indicators
+    this.detectFromSpeakerIndicators(participants);
+    
+    // Filter and clean up all found participants
+    const cleanParticipants = participants
+      .map(name => this.cleanParticipantName(name))
+      .filter(name => this.isValidParticipantName(name))
+      .filter((name, index, arr) => arr.indexOf(name) === index); // Remove duplicates
+
+    console.log('[AgentAssist][PARTICIPANTS] Found participants:', cleanParticipants);
+    return cleanParticipants;
+  }
+
+  // Strategy 1: Detect from participant panel/list
+  detectFromParticipantPanel(participants) {
+    // Look for the participant panel button and count
+    const participantButtons = document.querySelectorAll('[aria-label*="participant"], [data-tooltip*="participant"], [title*="participant"]');
+    
+    participantButtons.forEach(button => {
+      const text = button.textContent || button.getAttribute('aria-label') || button.getAttribute('title') || '';
+      
+      // Extract number from text like "3 participants" or "Show 5 participants"
+      const match = text.match(/(\d+)\s*participants?/i);
+      if (match) {
+        const count = parseInt(match[1]);
+        console.log('[AgentAssist][PARTICIPANTS] Panel shows', count, 'participants');
+        
+        // Try to find the actual names if panel is open
+        const participantNames = document.querySelectorAll('[data-participant-id] [jsslot] span, .uGOf1d, .zWGUib');
+        participantNames.forEach(nameEl => {
+          const name = nameEl.textContent?.trim();
+          if (name && this.looksLikePersonName(name)) {
+            participants.push(name);
+          }
+        });
+      }
+    });
+  }
+
+  // Strategy 2: Detect from video tiles in grid view
+  detectFromVideoTiles(participants) {
+    // Look for video tiles with participant names
+    const videoSelectors = [
+      '.XEazBc .notranslate', // Main video area names
+      '[data-participant-id] .notranslate', // Participant video tiles
+      '.TqKAX .notranslate', // Grid view names
+      '.N0zzGe .notranslate', // Another grid view selector
+    ];
+    
+    videoSelectors.forEach(selector => {
+      const elements = document.querySelectorAll(selector);
+      elements.forEach(element => {
+        const name = element.textContent?.trim();
+        if (name && this.looksLikePersonName(name)) {
+          participants.push(name);
+        }
+      });
+    });
+  }
+
+  // Strategy 3: Detect from speaker indicators and name overlays
+  detectFromSpeakerIndicators(participants) {
+    // Look for speaking indicators that show names
+    const speakerSelectors = [
+      '[aria-label*="speaking"] .notranslate',
+      '[data-self-name]',
+      '.zWGUib', // Active speaker name
+      '.NzPR9b' // Another speaker name selector
+    ];
+    
+    speakerSelectors.forEach(selector => {
+      const elements = document.querySelectorAll(selector);
+      elements.forEach(element => {
+        let name = element.getAttribute('data-self-name') || element.textContent?.trim();
+        if (name && this.looksLikePersonName(name)) {
+          participants.push(name);
+        }
+      });
+    });
+  }
+
+  // Check if text looks like a person's name
+  looksLikePersonName(text) {
+    if (!text || typeof text !== 'string') return false;
+    
+    const cleaned = text.trim();
+    
+    // Basic validation
+    if (cleaned.length < 2 || cleaned.length > 50) return false;
+    
+    // Must contain at least one letter
+    if (!/[a-zA-Z]/.test(cleaned)) return false;
+    
+    // Check against common person name patterns
+    const namePatterns = [
+      /^[A-Z][a-z]+ [A-Z][a-z]+$/, // "John Smith"
+      /^[A-Z][a-z]+$/, // "John"
+      /^[A-Z][a-z]+ [A-Z]\.$/, // "John S."
+      /^[A-Z]\. [A-Z][a-z]+$/, // "J. Smith"
+      /^[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+$/, // "John Michael Smith"
+    ];
+    
+    const matchesNamePattern = namePatterns.some(pattern => pattern.test(cleaned));
+    
+    // Additional validation: not a UI element
+    const isNotUIElement = !this.isNonParticipantText(cleaned);
+    
+    return matchesNamePattern && isNotUIElement;
+  }
+
+  // Clean participant name
+  cleanParticipantName(name) {
+    if (!name) return '';
+    
+    let cleaned = name.trim();
+    
+    // Remove common suffixes/prefixes
+    cleaned = cleaned.replace(/\s*\(You\)\s*/gi, '');
+    cleaned = cleaned.replace(/\s*\(Host\)\s*/gi, '');
+    cleaned = cleaned.replace(/\s*\(Organizer\)\s*/gi, '');
+    cleaned = cleaned.replace(/\s*\(Guest\)\s*/gi, '');
+    cleaned = cleaned.replace(/^.*:\s*/, ''); // Remove "Participant: " prefix
+    cleaned = cleaned.replace(/\s*-\s*presenting$/i, ''); // Remove "- presenting"
+    
+    return cleaned.trim();
+  }
+
+  // Validate if name is a real participant
+  isValidParticipantName(name) {
+    if (!name || typeof name !== 'string') return false;
+    
+    const cleaned = name.trim().toLowerCase();
+    
+    // Length check
+    if (cleaned.length < 2 || cleaned.length > 50) return false;
+    
+    // Must contain letters
+    if (!/[a-zA-Z]/.test(name)) return false;
+    
+    // Strict filtering for Google Meet UI elements
+    const strictUIFilters = [
+      'domain_disabled',
+      'timer_pause',
+      'timer_play',
+      'mic_off',
+      'mic_on',
+      'videocam_off',
+      'videocam_on',
+      'screen_share',
+      'more_vert',
+      'more_horiz',
+      'settings',
+      'participants',
+      'chat',
+      'present_to_all',
+      'content_copy',
+      'link',
+      'phone',
+      'closed_caption',
+      'record',
+      'stop',
+      'pause',
+      'play_arrow',
+      'volume_up',
+      'volume_off',
+      'fullscreen',
+      'pip',
+      'hand',
+      'raise_hand',
+      'thumb_up',
+      'thumb_down',
+      'favorite',
+      'info',
+      'help',
+      'error',
+      'warning',
+      'check',
+      'close',
+      'add',
+      'remove',
+      'edit',
+      'delete',
+      'search',
+      'filter',
+      'sort',
+      'grid_view',
+      'list_view',
+      'view_list',
+      'view_module',
+      'dashboard',
+      'menu',
+      'arrow_back',
+      'arrow_forward',
+      'expand_more',
+      'expand_less',
+      'keyboard_arrow_up',
+      'keyboard_arrow_down',
+      'keyboard_arrow_left',
+      'keyboard_arrow_right'
+    ];
+    
+    // Check if it's a UI element
+    if (strictUIFilters.includes(cleaned)) return false;
+    
+    // Check if it starts with common UI prefixes
+    const uiPrefixes = ['timer_', 'mic_', 'video_', 'cam_', 'audio_', 'sound_', 'vol_'];
+    if (uiPrefixes.some(prefix => cleaned.startsWith(prefix))) return false;
+    
+    // Check against other non-participant patterns
+    if (this.isNonParticipantText(name)) return false;
+    
+    // Check if it's a meeting code
+    if (this.isMeetingCode(name)) return false;
+    
+    return true;
+  }
+
+  // Helper function to filter out non-participant text
+  isNonParticipantText(text) {
+    if (!text) return true;
+    
+    const lowerText = text.toLowerCase().trim();
+    
+    // Google Meet UI elements and common non-participant text
+    const excludePatterns = [
+      // Basic UI actions
+      /turn\s*on/i,
+      /turn\s*off/i,
+      /more/i,
+      /share/i,
+      /meeting/i,
+      /chat/i,
+      /google/i,
+      /join/i,
+      /leave/i,
+      /mute/i,
+      /unmute/i,
+      /camera/i,
+      /microphone/i,
+      /settings/i,
+      /participants/i,
+      /present/i,
+      /screen/i,
+      /hand/i,
+      /raise/i,
+      /lower/i,
+      
+      // Common app/service names that aren't people
+      /reframe/i,
+      /zoom/i,
+      /skype/i,
+      /teams/i,
+      /discord/i,
+      /slack/i,
+      /webex/i,
+      /gotomeeting/i,
+      /bluejeans/i,
+      /jitsi/i,
+      /whereby/i,
+      /around/i,
+      /loom/i,
+      /calendly/i,
+      /scheduler/i,
+      /booking/i,
+      /appointment/i,
+      
+      // Material Design icons (common in Google Meet)
+      /^(mic|video|camera|audio|sound|volume|speaker|headset|call|phone)(_|-)?(on|off|up|down|mute|unmute)?$/i,
+      /^(screen|desktop|window)(_|-)?(share|cast)?$/i,
+      /^(timer|clock|time)(_|-)?(pause|play|stop|start)?$/i,
+      /^(grid|list|tile)(_|-)?(view|mode)?$/i,
+      /^(full|exit)(_|-)?screen$/i,
+      /^(picture|pip)(_|-)?in(_|-)?picture$/i,
+      /^(closed|open)(_|-)?caption[s]?$/i,
+      /^(record|recording|rec)(_|-)?(start|stop|pause|resume)?$/i,
+      /^(domain|network|connection)(_|-)?(disabled|enabled|error|warning)?$/i,
+      
+      // Google Meet specific UI elements
+      /domain_disabled/i,
+      /timer_pause/i,
+      /timer_play/i,
+      /mic_off/i,
+      /mic_on/i,
+      /videocam_off/i,
+      /videocam_on/i,
+      /content_copy/i,
+      /present_to_all/i,
+      /screen_share/i,
+      /more_vert/i,
+      /more_horiz/i,
+      /keyboard_arrow/i,
+      /expand_more/i,
+      /expand_less/i,
+      /arrow_(up|down|left|right|back|forward)/i,
+      /thumb_(up|down)/i,
+      /favorite/i,
+      /star/i,
+      /check/i,
+      /close/i,
+      /cancel/i,
+      /error/i,
+      /warning/i,
+      /info/i,
+      /help/i,
+      /search/i,
+      /filter/i,
+      /sort/i,
+      /add/i,
+      /remove/i,
+      /delete/i,
+      /edit/i,
+      /copy/i,
+      /paste/i,
+      /cut/i,
+      /undo/i,
+      /redo/i,
+      /save/i,
+      /download/i,
+      /upload/i,
+      /attach/i,
+      /link/i,
+      /unlink/i,
+      /visibility/i,
+      /visibility_off/i,
+      /lock/i,
+      /unlock/i,
+      /security/i,
+      /shield/i,
+      /verified/i,
+      /notification/i,
+      /bell/i,
+      /alarm/i,
+      /calendar/i,
+      /event/i,
+      /schedule/i,
+      /today/i,
+      /date/i,
+      /access/i,
+      /permission/i,
+      /admin/i,
+      /owner/i,
+      /guest/i,
+      /invite/i,
+      /invitation/i,
+      
+      // Numbers only
+      /^\d+$/,
+      
+      // Non-letter content
+      /^[^a-zA-Z]*$/,
+      
+      // Common words that appear in UI but aren't names
+      /\bmeet\b/i,
+      /\bgoogle\b/i,
+      /\bchrome\b/i,
+      /\bbrowser\b/i,
+      /\btab\b/i,
+      /\bwindow\b/i,
+      /\bpage\b/i,
+      /\bsite\b/i,
+      /\bweb\b/i,
+      /\bonline\b/i,
+      /\boffline\b/i,
+      /\bconnected\b/i,
+      /\bdisconnected\b/i,
+      /\bactive\b/i,
+      /\binactive\b/i,
+      /\benabled\b/i,
+      /\bdisabled\b/i,
+      /\bavailable\b/i,
+      /\bunavailable\b/i,
+      /\bready\b/i,
+      /\bwaiting\b/i,
+      /\bloading\b/i,
+      /\bprocessing\b/i,
+      /\bconnecting\b/i,
+      /\bjoining\b/i,
+      /\bleaving\b/i,
+      /\bstarting\b/i,
+      /\bstopping\b/i,
+      /\bpausing\b/i,
+      /\bresuming\b/i,
+      /\bsharing\b/i,
+      /\bpresenting\b/i,
+      /\brecording\b/i,
+      /\bmuting\b/i,
+      /\bunmuting\b/i,
+      
+      // Technical terms
+      /\bapi\b/i,
+      /\burl\b/i,
+      /\bhttp/i,
+      /\bwww\b/i,
+      /\bcom\b/i,
+      /\borg\b/i,
+      /\bnet\b/i,
+      /\bedu\b/i,
+      /\bgov\b/i,
+      /\bmil\b/i,
+      
+      // Generic placeholder text
+      /\buser\b/i,
+      /\bguest\b/i,
+      /\banonymous\b/i,
+      /\bunknown\b/i,
+      /\bdefault\b/i,
+      /\btemp\b/i,
+      /\btemporary\b/i,
+      /\btest\b/i,
+      /\bdemo\b/i,
+      /\bsample\b/i,
+      /\bexample\b/i,
+      /\bplaceholder\b/i,
+      
+      // Short meaningless strings
+      /^.{1}$/, // Single character
+      /^[a-z]{2,3}$/, // Very short lowercase (likely abbreviations/codes)
+    ];
+    
+    return excludePatterns.some(pattern => pattern.test(lowerText));
+  }
+
+  // Timer and time display functionality (voice recorder style)
+  
+  // Initialize timer system
+  initializeTimerSystem() {
+    // Voice recorder timer properties
+    this.totalRecordedTime = 0; // Total accumulated recording time
+    this.sessionTimer = null; // Active recording timer
+    this.sessionStartTime = null; // When current session started
+    this.isRecording = false; // Recording state
+    this.displayTimer = null; // Display update timer
+    
+    // Initialize timer state for popup sync
+    this.timerState = {
+      isRunning: false,
+      accumulatedTime: 0,
+      sessionStartTime: null
+    };
+    
+    console.log('[AgentAssist][TIMER] Voice recorder timer system initialized');
+  }
+
+  // Start recording session
+  startSessionTimer() {
+    if (this.sessionTimer) {
+      console.log('[AgentAssist][TIMER] Recording already in progress');
+      return;
+    }
+    
+    this.sessionStartTime = Date.now();
+    this.isRecording = true;
+    
+    // Update timer state for popup sync (accumulated time stays the same until session ends)
+    this.timerState.isRunning = true;
+    this.timerState.sessionStartTime = this.sessionStartTime;
+    this.timerState.accumulatedTime = this.totalRecordedTime;
+    
+    // Start the recording timer (updates every second)
+    this.sessionTimer = setInterval(() => {
+      const currentSessionTime = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+      const totalTime = this.totalRecordedTime + currentSessionTime;
+      
+      // Update display but keep accumulated time unchanged for popup sync
+      this.updateTimerDisplay(totalTime);
+    }, 1000);
+    
+    console.log('[AgentAssist][TIMER] Recording started - continuing from', this.formatDuration(this.totalRecordedTime));
+    this.updateTimerDisplay(this.totalRecordedTime);
+  }
+
+  // Stop recording session (pause, keeps accumulated time)
+  stopSessionTimer() {
+    if (this.sessionTimer) {
+      clearInterval(this.sessionTimer);
+      this.sessionTimer = null;
+      
+      // Add current session time to total
+      if (this.sessionStartTime) {
+        const sessionDuration = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+        this.totalRecordedTime += sessionDuration;
+        this.sessionStartTime = null;
+      }
+    }
+    
+    this.isRecording = false;
+    
+    // Update timer state for popup sync
+    this.timerState.isRunning = false;
+    this.timerState.sessionStartTime = null;
+    this.timerState.accumulatedTime = this.totalRecordedTime;
+    
+    console.log('[AgentAssist][TIMER] Recording stopped - total time:', this.formatDuration(this.totalRecordedTime));
+    
+    // Update display one final time
+    this.updateTimerDisplay(this.totalRecordedTime);
+  }
+
+  // Reset timer to 00:00 (for new recording session)
+  resetSessionTimer() {
+    this.stopSessionTimer();
+    this.totalRecordedTime = 0;
+    
+    // Update timer state for popup sync
+    this.timerState.isRunning = false;
+    this.timerState.sessionStartTime = null;
+    this.timerState.accumulatedTime = 0;
+    
+    this.updateTimerDisplay(0);
+    console.log('[AgentAssist][TIMER] Timer reset to 00:00');
+  }
+
+  // Update the timer display
+  updateTimerDisplay(seconds) {
+    const timeElement = this.sidebar?.querySelector('.agent-assist-header__status-time');
+    if (!timeElement) return;
+    
+    const formattedTime = this.formatDuration(seconds);
+    timeElement.textContent = formattedTime;
+    
+    // Broadcast timer update to popup
+    this.broadcastTimerUpdate();
+    
+    console.log(`[AgentAssist][TIMER] Display updated: ${formattedTime}`);
+  }
+
+  // Broadcast timer state to popup for synchronization
+  broadcastTimerUpdate() {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'timerUpdate',
+        timerState: {
+          isRunning: this.timerState.isRunning,
+          accumulatedTime: this.timerState.accumulatedTime,
+          sessionStartTime: this.timerState.sessionStartTime
+        }
+      }).catch(() => {
+        // Popup might not be open, that's okay
+      });
+    } catch (error) {
+      // Chrome runtime not available, ignore
+    }
+  }
+
+  // Format duration as MM:SS or HH:MM:SS
+  formatDuration(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+  }
+
+  // Get current total recording time
+  getTotalRecordingTime() {
+    if (this.isRecording && this.sessionStartTime) {
+      const currentSessionTime = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+      return this.totalRecordedTime + currentSessionTime;
+    }
+    return this.totalRecordedTime;
+  }
+
+  // Main display update function (voice recorder style)
+  updateSessionDisplay() {
+    if (!this.sidebar) {
+      console.log('[AgentAssist][DISPLAY] No sidebar found');
+      return;
+    }
+    
+    console.log('[AgentAssist][DISPLAY] Updating display...');
+    
+    // Update meeting title
+    this.updateMeetingTitleDisplay();
+    
+    // Update timer display (voice recorder shows current recording time)
+    this.updateTimerDisplay(this.getTotalRecordingTime());
+    
+    console.log('[AgentAssist][DISPLAY] Display update complete');
+  }
+
+  // Update meeting title in the header
+  updateMeetingTitleDisplay() {
+    const brandElement = this.sidebar.querySelector('.agent-assist-brand');
+    if (!brandElement) {
+      console.log('[AgentAssist][DISPLAY] Brand element not found');
+      return;
+    }
+    
+    const currentTitle = this.getMeetingTitle();
+    const displayedTitle = brandElement.textContent;
+    
+    if (displayedTitle !== currentTitle) {
+      brandElement.textContent = currentTitle;
+      console.log(`[AgentAssist][DISPLAY] Title updated: "${displayedTitle}" → "${currentTitle}"`);
+    }
+  }
+
+  // Start comprehensive periodic updates (voice recorder style)
+  startPeriodicUpdates() {
+    console.log('[AgentAssist][UPDATES] Starting periodic updates...');
+    
+    // Initialize voice recorder timer system
+    this.initializeTimerSystem();
+    
+    // Set initial timer display to 00:00
+    this.updateTimerDisplay(0);
+    
+    // Update meeting title more frequently (every 5 seconds) for participant changes
+    this.titleUpdateInterval = setInterval(() => {
+      this.updateMeetingTitleDisplay();
+    }, 5000);
+    
+    // Also update immediately when page content changes (for faster participant detection)
+    this.setupParticipantObserver();
+    
+    console.log('[AgentAssist][UPDATES] Periodic updates started');
+  }
+
+  // Setup observer to detect when participants join/leave
+  setupParticipantObserver() {
+    // Watch for changes in the main Google Meet container
+    const meetContainer = document.querySelector('body');
+    if (!meetContainer) return;
+
+    // Create observer to watch for DOM changes
+    this.participantObserver = new MutationObserver((mutations) => {
+      let shouldUpdate = false;
+      
+      mutations.forEach((mutation) => {
+        // Check if any added/removed nodes might be participant-related
+        if (mutation.type === 'childList') {
+          const participantSelectors = ['.notranslate', '[data-participant-id]', '.XEazBc', '.zWGUib', '.NzPR9b'];
+          
+          [...mutation.addedNodes, ...mutation.removedNodes].forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Check if the node or its children match participant selectors
+              const isParticipantNode = participantSelectors.some(selector => {
+                return node.matches && (node.matches(selector) || node.querySelector(selector));
+              });
+              
+              if (isParticipantNode) {
+                shouldUpdate = true;
+              }
+            }
+          });
+        }
+      });
+      
+      if (shouldUpdate) {
+        // Debounce updates to avoid too frequent calls
+        clearTimeout(this.participantUpdateTimeout);
+        this.participantUpdateTimeout = setTimeout(() => {
+          console.log('[AgentAssist][OBSERVER] Participant change detected, updating title');
+          this.updateMeetingTitleDisplay();
+        }, 1000);
+      }
+    });
+
+    // Start observing
+    this.participantObserver.observe(meetContainer, {
+      childList: true,
+      subtree: true
+    });
+
+    console.log('[AgentAssist][OBSERVER] Participant observer started');
+  }
+
+  // Stop all periodic updates
+  stopPeriodicUpdates() {
+    console.log('[AgentAssist][UPDATES] Stopping periodic updates...');
+    
+    this.stopSessionTimer();
+    
+    if (this.titleUpdateInterval) {
+      clearInterval(this.titleUpdateInterval);
+      this.titleUpdateInterval = null;
+    }
+    
+    if (this.participantObserver) {
+      this.participantObserver.disconnect();
+      this.participantObserver = null;
+    }
+    
+    if (this.participantUpdateTimeout) {
+      clearTimeout(this.participantUpdateTimeout);
+      this.participantUpdateTimeout = null;
+    }
+    
+    console.log('[AgentAssist][UPDATES] All periodic updates stopped');
   }
 
   // Check if SF Pro Text is loaded
@@ -210,6 +1185,13 @@ class AgentAssistSidebar {
       console.log('=== Force Show Agent Assist ===');
       this.show();
     };
+    
+    window.testScoreTab = () => {
+      console.log('=== Testing Score Tab ===');
+      this.updateScore(73, 'Good performance on key metrics');
+      this.switchTab('score');
+      this.show();
+    };
   }
   
   // New method to ensure the toggle button stays visible
@@ -253,10 +1235,10 @@ class AgentAssistSidebar {
       <header class="agent-assist-header">
         <div class="agent-assist-header__logo" style="background-image: url('${chrome.runtime.getURL('icons/logo.png')}')"></div>
         <div class="agent-assist-header__info">
-          <div class="agent-assist-brand">Team Standup</div>
+          <div class="agent-assist-brand">${this.getMeetingTitle()}</div>
           <div class="agent-assist-header__status">
             <div class="agent-assist-header__status-dot"></div>
-            <span class="agent-assist-header__status-time">12:34</span>
+            <span class="agent-assist-header__status-time">00:00</span>
           </div>
         </div>
         <div class="agent-assist-header__actions">
@@ -307,6 +1289,20 @@ class AgentAssistSidebar {
     document.body.appendChild(el);
     this.sidebar = el;
     this.underlineEl = el.querySelector('.agent-assist-tab-underline');
+    
+    // Add double-click to reset timer functionality
+    const timeElement = el.querySelector('.agent-assist-header__status-time');
+    if (timeElement) {
+      timeElement.addEventListener('dblclick', () => {
+        if (!this.isRecording) {
+          this.resetSessionTimer();
+          console.log('[AgentAssist][TIMER] Timer reset by user double-click');
+        }
+      });
+      timeElement.style.cursor = 'pointer';
+      timeElement.title = 'Double-click to reset timer (when not recording)';
+    }
+    
     this.addTabListeners();
     this.setupDraggable();
     this.renderCurrentTab();
@@ -323,6 +1319,10 @@ class AgentAssistSidebar {
     
     if (!isActive) {
       console.log('[AgentAssist][MIC] Starting continuous transcription...');
+      
+      // Start session timer with new system
+      this.startSessionTimer();
+      
       // Ensure audio websocket is connected before streaming
       this.connectAudioWebSocket();
       this.startLocalStreaming();
@@ -340,6 +1340,10 @@ class AgentAssistSidebar {
       
     } else {
       console.log('[AgentAssist][MIC] Stopping transcription...');
+      
+      // Stop session timer with new system
+      this.stopSessionTimer();
+      
       this.pauseLocalStreaming();
       
       // Change button back to mic state
@@ -502,6 +1506,9 @@ class AgentAssistSidebar {
 
   stopExtension() {
     console.log('[AgentAssist][STOP] Stopping extension...');
+    
+    // Stop all periodic updates
+    this.stopPeriodicUpdates();
     
     // Stop microphone streaming
     this.pauseLocalStreaming();
@@ -2064,20 +3071,56 @@ async processQueue() {
           }).join('');
           return entries;
       case 'score':
-        return `<div style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 231px; height: 98px; left: calc(50% - 231px/2 + 0.5px); top: calc(50% - 98px/2);">
-                  <div style="box-sizing: border-box; width: 40px; height: 40px; border: 1px solid #F1F1F1; border-radius: 4px; flex: none; order: 0; flex-grow: 0; position: relative; display: flex; align-items: center; justify-content: center;">
-                    <svg width="21" height="20" viewBox="0 0 21 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M10.5 13.334V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M13.834 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M17.166 8.33398V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M18.8327 2.5L11.6277 9.705C11.589 9.7438 11.543 9.77459 11.4924 9.79559C11.4418 9.8166 11.3875 9.82741 11.3327 9.82741C11.2779 9.82741 11.2236 9.8166 11.173 9.79559C11.1224 9.77459 11.0764 9.7438 11.0377 9.705L8.29435 6.96167C8.21621 6.88355 8.11025 6.83967 7.99977 6.83967C7.88928 6.83967 7.78332 6.88355 7.70518 6.96167L2.16602 12.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M3.83398 15V17.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M7.16602 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
+        if (!s.transcripts.length) 
+          return `<div style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 231px; height: 98px; left: calc(50% - 231px/2 + 0.5px); top: calc(50% - 98px/2);">
+                    <div style="box-sizing: border-box; width: 40px; height: 40px; border: 1px solid #F1F1F1; border-radius: 4px; flex: none; order: 0; flex-grow: 0; position: relative; display: flex; align-items: center; justify-content: center;">
+                      <svg width="21" height="20" viewBox="0 0 21 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M10.5 13.334V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M13.834 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M17.166 8.33398V17.5007" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M18.8327 2.5L11.6277 9.705C11.589 9.7438 11.543 9.77459 11.4924 9.79559C11.4418 9.8166 11.3875 9.82741 11.3327 9.82741C11.2779 9.82741 11.2236 9.8166 11.173 9.79559C11.1224 9.77459 11.0764 9.7438 11.0377 9.705L8.29435 6.96167C8.21621 6.88355 8.11025 6.83967 7.99977 6.83967C7.88928 6.83967 7.78332 6.88355 7.70518 6.96167L2.16602 12.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M3.83398 15V17.5" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M7.16602 11.666V17.4993" stroke="#565ADD" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 8px; width: 231px; height: 42px; flex: none; order: 1; flex-grow: 0;">
+                      <div style="width: 231px; height: 18px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 14px; line-height: 18px; text-align: center; color: #2E2D2F; flex: none; order: 0; align-self: stretch; flex-grow: 0;">Displaying Score...</div>
+                      <div style="width: 231px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the score is generated.</div>
+                    </div>
+                  </div>`;
+        
+        // Show key metrics container when scores are available
+        return `<div class="aa-score-metrics-container">
+                  <!-- First metric box - Score -->
+                  <div class="aa-score-metric-box">
+                    <div class="aa-metric-label-row">
+                      <div class="aa-metric-icon">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M7 9.334V12.2507" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M9.334 8.166V12.2493" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M11.666 5.834V12.2507" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M12.8327 1.75L7.78925 6.7935C7.76211 6.8207 7.72989 6.84218 7.69447 6.85694C7.65906 6.87171 7.62104 6.87948 7.58268 6.87948C7.54433 6.87948 7.50631 6.87171 7.47089 6.85694C7.43548 6.84218 7.40326 6.8207 7.37611 6.7935L5.45577 4.87317C5.40116 4.81855 5.32695 4.78776 5.24959 4.78776C5.17223 4.78776 5.09802 4.81855 5.04341 4.87317L1.16602 8.75" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M2.334 10.5V12.25" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M4.666 8.166V12.2493" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </div>
+                      <div class="aa-metric-label">Score</div>
+                    </div>
+                    <div class="aa-metric-value">${s.scores.length > 0 ? s.scores[s.scores.length - 1].score : '73'}</div>
                   </div>
-                  <div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 8px; width: 231px; height: 42px; flex: none; order: 1; flex-grow: 0;">
-                    <div style="width: 231px; height: 18px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 14px; line-height: 18px; text-align: center; color: #2E2D2F; flex: none; order: 0; align-self: stretch; flex-grow: 0;">Displaying Score...</div>
-                    <div style="width: 231px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the score is generated.</div>
+                  
+                  <!-- Second metric box - Categories covered -->
+                  <div class="aa-score-metric-box">
+                    <div class="aa-metric-label-row">
+                      <div class="aa-metric-icon">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M11.666 12.6667C11.975 12.6667 12.272 12.5437 12.491 12.325C12.71 12.1062 12.833 11.8094 12.833 11.5V5.66667C12.833 5.35725 12.71 5.0605 12.491 4.84171C12.272 4.62292 11.975 4.5 11.666 4.5H7.05768C6.86257 4.50191 6.67008 4.45486 6.49786 4.36314C6.32563 4.27142 6.17916 4.13797 6.07185 3.975L5.59935 3.275C5.49312 3.11369 5.3485 2.98128 5.17847 2.88965C5.00845 2.79802 4.81833 2.75003 4.62518 2.75H2.33268C2.02326 2.75 1.72652 2.87292 1.50772 3.09171C1.28893 3.3105 1.16602 3.60725 1.16602 3.91667V11.5C1.16602 11.8094 1.28893 12.1062 1.50772 12.325C1.72652 12.5437 2.02326 12.6667 2.33268 12.6667H11.666Z" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M5.25 8.58268L6.41667 9.74935L8.75 7.41602" stroke="#646466" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </div>
+                      <div class="aa-metric-label">Categories covered</div>
+                    </div>
+                    <div class="aa-metric-value">6/8</div>
                   </div>
                 </div>`;
       case 'history':
@@ -2284,13 +3327,42 @@ hide() {
   addCoachingTip(category, title, content) { this.state.coaching.push({ category, title, content, timestamp: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
   addChatMessage(role, text) { this.state.coachChat.push({ role, text, ts: Date.now() }); if (this.state.currentTab==='coach') this.renderCurrentTab(); }
   getCoachTabHTML() {
-    const tipsHTML = this.state.coaching.slice().reverse().map(c => `<div class="aa-coach-tip"><div class="aa-coach-category">${this.escapeHTML(c.category)}</div><div class="aa-coach-title">${this.escapeHTML(c.title)}</div><div class="aa-coach-body">${this.escapeHTML(c.content)}</div></div>`).join('');
-    const messages = this.state.coachChat.map(m => `<div class="aa-msg ${m.role}">${this.escapeHTML(m.text)}</div>`).join('');
-    return `<div class="aa-coach-layout">`+
-      `<div class="aa-coach-tips-scroll">${tipsHTML || this.emptyState('🎯','Coaching','Coaching tips will appear here.')}</div>`+
-      `<div class="aa-coach-chat"><div class="aa-chat-messages" id="aa-chat-messages">${messages}</div>`+
-      `<form class="aa-chat-input-row" id="aa-chat-form"><input type="text" id="aa-chat-input" placeholder="Type a message..." autocomplete="off" /><button type="submit">Send</button></form></div>`+
-    `</div>`;
+    return `<div class="aa-coach-new-layout">
+      <!-- Coach intro message container -->
+      <div class="aa-coach-intro-container">
+        <!-- Coach icon container -->
+        <div class="aa-coach-icon-container">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8.0004 5.33268V4.26602H5.33374" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9.99935 5.334H4.79935C4.15631 5.334 3.66602 5.82428 3.66602 6.46732V9.00065C3.66602 9.64369 4.15631 10.134 4.79935 10.134H9.99935C10.6424 10.134 11.1327 9.64369 11.1327 9.00065V6.46732C11.1327 5.82428 10.6424 5.334 9.99935 5.334Z" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.33398 7.334H4.66732" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M11.334 7.334H12.6673" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 6.666V7.9993" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 6.666V7.9993" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        
+        <!-- Coach intro message -->
+        <div class="aa-coach-intro-message">
+          <p>Hi, I'm your AI Coach — here to guide you, just ask me anything!</p>
+        </div>
+      </div>
+      
+      <!-- Bottom section -->
+      <div class="aa-coach-bottom-section">
+        <!-- Search bar -->
+        <div class="aa-coach-search-bar">
+          <span class="aa-coach-search-placeholder">Ask Anything</span>
+          <!-- Action button for search -->
+          <div class="aa-coach-search-button">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M11.3913 12.4577C11.4174 12.5208 11.4608 12.5747 11.5173 12.6121C11.5739 12.6494 11.6414 12.6685 11.7093 12.6668C11.7772 12.665 11.8434 12.6426 11.8978 12.6023C11.9522 12.5621 11.9925 12.506 12.0156 12.4417L16.3489 -0.225C16.3712 -0.284 16.3755 -0.348 16.3612 -0.4093C16.3469 -0.4706 16.3156 -0.5267 16.2716 -0.5711C16.2276 -0.6155 16.1729 -0.6464 16.1125 -0.66C16.0521 -0.6737 15.9881 -0.6696 15.9289 -0.6483L3.26226 3.685C3.19856 3.7071 3.14269 3.7483 3.10225 3.8031C3.0618 3.858 3.03892 3.9238 3.03692 3.9918C3.03492 4.0598 3.05392 4.1267 3.09158 4.1835C3.12923 4.2403 3.18363 4.2844 3.24693 4.3097L8.5336 6.4297C8.70026 6.4966 8.85193 6.5967 8.97893 6.7238C9.10593 6.851 9.20626 7.0027 9.27359 7.1697L11.3913 12.4577Z" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M16.2692 -0.5684L8.97559 6.7243" stroke="#565ADD" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>`;
   }
   escapeHTML(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s])); }
   renderCurrentTab() {
@@ -2323,15 +3395,150 @@ hide() {
 
   scheduleContextUpdates() { if (this.contextInterval) clearInterval(this.contextInterval); this.contextInterval = setInterval(()=>this.sendContextUpdate(), 30000); }
 
+  // Get participants from meeting (completely redesigned)
   getParticipants() {
-    const participants = [];
-    document.querySelectorAll('[data-self-name]').forEach(element => {
-      const name = element.getAttribute('data-self-name');
-      if (name && !participants.includes(name)) {
-        participants.push(name);
-      }
+    console.log('[AgentAssist][PARTICIPANTS] Starting participant detection...');
+    const participants = new Set(); // Use Set to avoid duplicates
+    
+    // Method 1: Primary selector from user's HTML (.notranslate)
+    this.extractParticipantsFromSelector('.notranslate', participants, 'notranslate spans');
+    
+    // Method 2: Research-based selector from user
+    this.extractParticipantsFromSelector('.VfPpkd-Bz112c-LgbsSe.yHy1rc.eT1y3b-fm3gLc.r4bT5e', participants, 'research selector');
+    
+    // Method 3: Google Meet participant containers
+    this.extractParticipantsFromContainers(participants);
+    
+    // Method 4: Fallback selectors
+    const fallbackSelectors = [
+      '[data-self-name]',
+      '.zWGUib', // Meet participant name
+      '.KjZzFe', // Another participant selector
+      '[aria-label*="participant"]',
+      '.XEazBc [jsslot] div span',
+      '[data-participant-id] span'
+    ];
+    
+    fallbackSelectors.forEach(selector => {
+      this.extractParticipantsFromSelector(selector, participants, `fallback: ${selector}`);
     });
-    return participants;
+    
+    // Convert Set to Array and filter
+    const participantList = Array.from(participants).filter(name => 
+      this.isValidParticipantName(name)
+    );
+    
+    console.log('[AgentAssist][PARTICIPANTS] Final participant list:', participantList);
+    return participantList;
+  }
+
+  // Extract participants from a specific selector
+  extractParticipantsFromSelector(selector, participantSet, sourceType) {
+    try {
+      const elements = document.querySelectorAll(selector);
+      console.log(`[AgentAssist][PARTICIPANTS] Checking ${sourceType}: found ${elements.length} elements`);
+      
+      elements.forEach((element, index) => {
+        // Try different ways to get the name
+        const nameOptions = [
+          element.textContent?.trim(),
+          element.getAttribute('data-self-name'),
+          element.getAttribute('aria-label'),
+          element.getAttribute('title'),
+          element.getAttribute('alt')
+        ];
+        
+        nameOptions.forEach(name => {
+          if (name && this.isValidParticipantName(name)) {
+            const cleanedName = this.cleanParticipantName(name);
+            if (cleanedName) {
+              participantSet.add(cleanedName);
+              console.log(`[AgentAssist][PARTICIPANTS] Added from ${sourceType}:`, cleanedName);
+            }
+          }
+        });
+      });
+    } catch (error) {
+      console.warn(`[AgentAssist][PARTICIPANTS] Error with ${sourceType}:`, error);
+    }
+  }
+
+  // Extract participants from Google Meet specific containers
+  extractParticipantsFromContainers(participantSet) {
+    try {
+      // Look for participant containers/cards
+      const containerSelectors = [
+        '.XEazBc', // Main participant container
+        '[data-participant-id]', // Participant with ID
+        '.participant-item', // Generic participant item
+        '.VfPpkd-Bz112c' // Material button containers
+      ];
+      
+      containerSelectors.forEach(containerSelector => {
+        const containers = document.querySelectorAll(containerSelector);
+        console.log(`[AgentAssist][PARTICIPANTS] Checking containers ${containerSelector}: ${containers.length} found`);
+        
+        containers.forEach(container => {
+          // Look for text content within containers
+          const textElements = container.querySelectorAll('span, div, [data-self-name]');
+          textElements.forEach(textEl => {
+            const name = textEl.textContent?.trim() || textEl.getAttribute('data-self-name');
+            if (name && this.isValidParticipantName(name)) {
+              const cleanedName = this.cleanParticipantName(name);
+              if (cleanedName) {
+                participantSet.add(cleanedName);
+                console.log('[AgentAssist][PARTICIPANTS] Added from container:', cleanedName);
+              }
+            }
+          });
+        });
+      });
+    } catch (error) {
+      console.warn('[AgentAssist][PARTICIPANTS] Error extracting from containers:', error);
+    }
+  }
+
+  // Check if a name is valid for a participant
+  isValidParticipantName(name) {
+    if (!name || typeof name !== 'string') return false;
+    
+    const trimmed = name.trim();
+    if (trimmed.length < 2 || trimmed.length > 100) return false;
+    
+    // Filter out UI text and non-names
+    const invalidPatterns = [
+      /^(turn on|turn off|more|share|meeting|chat|google|enable|disable)/i,
+      /^(mute|unmute|camera|microphone|mic|video)/i,
+      /^(join|leave|end|start|settings|options)/i,
+      /^(participants|people|attendees|members)/i,
+      /^[0-9\s\-\+\(\)]+$/, // Only numbers/symbols
+      /^[a-z]{1,3}$/, // Very short abbreviations
+      /google\.com|meet\.google/i // Emails/URLs
+    ];
+    
+    return !invalidPatterns.some(pattern => pattern.test(trimmed));
+  }
+
+  // Clean and normalize participant name
+  cleanParticipantName(name) {
+    if (!name) return null;
+    
+    // Remove common suffixes and prefixes
+    let cleaned = name
+      .replace(/\s*\(You\)\s*/gi, '') // Remove "(You)"
+      .replace(/\s*\(Host\)\s*/gi, '') // Remove "(Host)"
+      .replace(/\s*\(Presenter\)\s*/gi, '') // Remove "(Presenter)"
+      .replace(/\s*\(Guest\)\s*/gi, '') // Remove "(Guest)"
+      .replace(/^(Mr\.|Ms\.|Dr\.|Prof\.)\s*/gi, '') // Remove titles
+      .trim();
+    
+    // Further validation after cleaning
+    if (cleaned.length < 2 || cleaned.length > 50) return null;
+    
+    // Check if it looks like a real name (has at least one letter)
+    if (!/[a-zA-Z]/.test(cleaned)) return null;
+    
+    return cleaned;
   }
 
   getMeetingId() {
@@ -2452,6 +3659,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'getMeetingInfo') {
     sendResponse({ participants: agentAssist.getParticipants().length, duration: null, isInMeeting: true });
+  }
+  if (message.type === 'getTimerState') {
+    sendResponse({
+      isRunning: agentAssist.timerState.isRunning,
+      accumulatedTime: agentAssist.timerState.accumulatedTime,
+      sessionStartTime: agentAssist.timerState.sessionStartTime
+    });
   }
   return true;
 });
