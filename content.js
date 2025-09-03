@@ -3,6 +3,8 @@ function aaDebounce(fn, wait = 100) { let t; return (...args) => { clearTimeout(
 
 class AgentAssistSidebar {
   constructor() {
+    this.processing = false;
+    this.queue = [];
     this.state = {
       visible: false,
       currentTab: 'script', // Changed from 'score' to 'assist'
@@ -1541,6 +1543,92 @@ class AgentAssistSidebar {
     console.log('[AgentAssist][STOP] Extension stopped successfully');
   }
 
+delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async handleCategory(category) {
+  let formattedData = [];
+
+  if (Array.isArray(category)) {
+    formattedData = category;
+  } else if (typeof category === 'object' && category !== null) {
+    formattedData = [category];
+  } else {
+    return;
+  }
+  for (const item of formattedData) {
+    console.log('formattedData Handled:', item.subcat);
+    let subcat_status = "", missedLabel = "", nudgeClass = "";
+    const nudgeText = typeof item.nudges === 'string' ? item.nudges.trim() : '';
+    if (item.value === 'Yes') {
+      subcat_status = "completed";
+    } else if (item.value === 'Partial Yes') {
+      nudgeClass = 'quickAction';
+    } else if (item.value === 'No' || item.value === undefined) {
+      subcat_status = "missed";
+      nudgeClass = 'missednudge';
+    } else if (item.value === 'NA') {
+      subcat_status = "missed";
+      missedLabel = `<span class="paraStatus">Missed</span>`;
+      nudgeClass = 'missednudge';
+    }
+    const nudgesHTML = nudgeText !== '' ? `
+      <div class="nudgesSection ${nudgeClass}">
+        <h5>${item.subcat}</h5>
+        <ul>
+          ${nudgeText.split('\n').map(n => `<li>${n.trim()}</li>`).join('')}
+        </ul>  
+      </div>` : '';
+    await this.delay(5000);
+    this.state.suggestions.push(nudgesHTML);
+  }
+  this.switchTab('assist');  // Switch tab after all items rendered
+}
+  
+async processQueue() {
+    while (this.queue.length > 0) {
+      //console.log(this.queue);
+        const category = this.queue.shift();
+        await this.handleCategory(category);
+    }
+    this.processing = false;
+}
+  formatData(obj) {
+        let result = [];
+        for (const key in obj) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+                if (obj[key].title) {
+                    let mainCategory = {
+                        cat: obj[key].title,
+                        catscore: obj[key].cat_score,
+                        maxscore: obj[key].max_score,
+                        covered_subcat: obj[key].covered_subcat,
+                        totalsubcat: obj[key].total_subcat,
+                        subcategories: [],
+                        show_nudge: obj[key].show_nudge
+                    };
+                    for (const subKey in obj[key].content) {
+                        if (typeof obj[key].content[subKey] === 'object' && obj[key].content[subKey].title) {
+                            let subEntry = { subcat: obj[key].content[subKey].title };
+
+                            if (obj[key].content[subKey].value) subEntry.value = obj[key].content[subKey].value;
+                            if (obj[key].content[subKey].reason) subEntry.reason = obj[key].content[subKey].reason;
+                            if (obj[key].content[subKey].sentence) subEntry.sentence = obj[key].content[subKey].sentence;
+                            if (obj[key].content[subKey].total_score) subEntry.total_score = obj[key].content[subKey].total_score;
+                            if (obj[key].content[subKey].nudges) subEntry.nudges = obj[key].content[subKey].nudges;
+                            if (obj[key].content[subKey].score) subEntry.score = obj[key].content[subKey].score;
+
+                            mainCategory.subcategories.push(subEntry);
+                        }
+                    }
+
+                    result.push(mainCategory);
+                }
+            }
+        }
+        return result;
+  }
   // Connect to live results websocket (receives JSON objects)
   connectResultsWebSocket() {
     try {
@@ -1564,8 +1652,25 @@ class AgentAssistSidebar {
               this.renderCurrentTab();
             }
           }
-          if (data.action === 'analysis' && data.data) {
-            console.log(data.analysis_result)
+         if (data.action === 'analysis' && data.analysis_result !== undefined) {
+            const formattedData = this.formatData(data.analysis_result.response);
+            //console.log(formattedData)
+            if (Array.isArray(formattedData)) {
+              formattedData.forEach(catObj => {
+                if (catObj.show_nudge && Array.isArray(catObj.subcategories)) {
+                  catObj.subcategories.forEach(subcatObj => {
+                    console.log(subcatObj);
+                    this.queue.push(subcatObj);
+                  });
+                }
+              });
+              this.processing = true;
+              this.processQueue()
+            }
+
+
+            //this.state.suggestions.push(formattedData);
+           // this.switchTab('assist');
           }
           
           
@@ -1579,7 +1684,7 @@ class AgentAssistSidebar {
       this.wsResults.onclose = (e) => { console.log('[AgentAssist][WS][RESULTS] Closed', e.code, e.reason); setTimeout(()=>this.connectResultsWebSocket(), 3000); };
     } catch(err){ console.error('[AgentAssist][WS][RESULTS] Connect failed', err); }
   }
-
+  
   // Connect to audio websocket (send raw 16k PCM little-endian Int16 frames)
   connectAudioWebSocket() {
     try {
@@ -2907,7 +3012,7 @@ class AgentAssistSidebar {
     const s = this.state;
     switch (tab) {
       case 'assist':
-        if (!s.suggestions.length) return `<div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 206px; height: 98px; left: calc(50% - 206px/2 + 0.5px); top: calc(50% - 98px/2);">
+        /*if (!s.suggestions.length) return `<div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 206px; height: 98px; left: calc(50% - 206px/2 + 0.5px); top: calc(50% - 98px/2);">
           <div style="box-sizing: border-box; width: 40px; height: 40px; position: relative; flex: none; order: 0; flex-grow: 0;">
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: 0; top: 0;">
               <path d="M4 0.5H36C37.933 0.5 39.5 2.067 39.5 4V36C39.5 37.933 37.933 39.5 36 39.5H4C2.067 39.5 0.5 37.933 0.5 36V4C0.5 2.067 2.067 0.5 4 0.5Z" stroke="#F1F1F1"/>
@@ -2929,6 +3034,14 @@ class AgentAssistSidebar {
           const barClass = item.bar==='green' ? ' bar-green' : '';
           return `<div class="aa-suggestion${barClass}" data-idx="${i}">${this.escapeHTML(item.text)}</div>`;
         }).join('') + '</div>';
+        */
+        if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
+        return `<div class="aa-suggestions">` + 
+          s.suggestions.slice().reverse().map(item => 
+            `<div class="aa-suggestion">${typeof item === 'string' ? item : this.escapeHTML(item.text)}</div>`
+          ).join('') +
+        `</div>`;
+        
       case 'script':
          if (!s.transcripts.length) 
             return `<div style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 229px; height: 98px; left: calc(50% - 229px/2 + 0.5px); top: calc(50% - 98px/2);">
