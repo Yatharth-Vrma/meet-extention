@@ -69,8 +69,8 @@ class AgentAssistSidebar {
 
   // Fixed WebSocket endpoints (as provided) for audio streaming & results
   // NOTE: Per user request, query string kept exactly as supplied (including spaces)
-  this.WEBSOCKET_RESULTS_URL = "wss://devreal.darwix.ai/ws/live-results?user_id=rajat.kumawat@cur8.in&manager_id=4248&company_id=31&team_id=23&full_name=Rajat kumawat&region=east";
-  this.WEBSOCKET_AUDIO_URL   = "wss://devreal.darwix.ai/ws/audio-stream?user_id=rajat.kumawat@cur8.in&manager_id=4248&company_id=31&team_id=23&full_name=Rajat kumawat&region=east";
+  this.WEBSOCKET_RESULTS_URL = "wss://devreal.darwix.ai/ws/live-results?user_id=user.brex@darwix.ai&manager_id=4327&company_id=39&team_id=39&full_name=User Brex&region=east";
+  this.WEBSOCKET_AUDIO_URL   = "wss://devreal.darwix.ai/ws/audio-stream?user_id=user.brex@darwix.ai&manager_id=4327&company_id=39&team_id=39&full_name=User Brex&region=east";
 
     // Removed Azure STT configuration - using WebSocket audio streaming only
     
@@ -3045,7 +3045,7 @@ async processQueue() {
     const s = this.state;
     switch (tab) {
       case 'assist':
-        /*if (!s.suggestions.length) return `<div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 206px; height: 98px; left: calc(50% - 206px/2 + 0.5px); top: calc(50% - 98px/2);">
+        if (!s.suggestions.length) return `<div style="display: flex; flex-direction: column; align-items: center; padding: 0px; gap: 16px; position: absolute; width: 206px; height: 98px; left: calc(50% - 206px/2 + 0.5px); top: calc(50% - 98px/2);">
           <div style="box-sizing: border-box; width: 40px; height: 40px; position: relative; flex: none; order: 0; flex-grow: 0;">
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: 0; top: 0;">
               <path d="M4 0.5H36C37.933 0.5 39.5 2.067 39.5 4V36C39.5 37.933 37.933 39.5 36 39.5H4C2.067 39.5 0.5 37.933 0.5 36V4C0.5 2.067 2.067 0.5 4 0.5Z" stroke="#F1F1F1"/>
@@ -3062,13 +3062,6 @@ async processQueue() {
             <div style="width: 206px; height: 16px; font-family: 'SF Pro Text'; font-style: normal; font-weight: 500; font-size: 12px; line-height: 16px; text-align: center; color: #646466; flex: none; order: 1; flex-grow: 0;">Please wait until the nudges appear</div>
           </div>
         </div>`;
-        return `<div class="aa-suggestions">` + s.suggestions.slice().reverse().map((obj,i) => {
-          const item = typeof obj === 'string' ? { text: obj } : obj;
-          const barClass = item.bar==='green' ? ' bar-green' : '';
-          return `<div class="aa-suggestion${barClass}" data-idx="${i}">${this.escapeHTML(item.text)}</div>`;
-        }).join('') + '</div>';
-        */
-        if (!s.suggestions.length) return this.emptyState('💡','Ready to Assist','AI suggestions will appear here.');
         return `<div class="aa-suggestions">` + 
           s.suggestions.slice().reverse().map(item => {
             // If item is already an HTML string (contains HTML tags), use it directly
